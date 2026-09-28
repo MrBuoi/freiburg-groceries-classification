@@ -9,5 +9,5 @@ Dự án so sánh hiệu quả giữa 3 kiến trúc Deep Learning từ đơn gi
 
 1. **Clone repository:**
    ```bash
-   git clone [https://github.com/](https://github.com/)<username-cua-ban>/freiburg-groceries-classification.git
+   git clone [[https://github.com/](https://github.com/)<username-cua-ban>/freiburg-groceries-classification.git](https://github.com/MrBuoi/freiburg-groceries-classification.git)
    cd freiburg-groceries-classification
