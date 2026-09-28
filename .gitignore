@@ -1,0 +1,23 @@
+# Bỏ qua thư mục data và các file nén
+data/*
+!data/.gitkeep
+*.zip
+*.tar.gz
+
+# Checkpoints mô hình và file trọng số nặng
+*.pt
+*.pth
+*.onnx
+runs/
+checkpoints/
+
+# Virtual Environment & Python cache
+__pycache__/
+*.py[cod]
+.venv/
+env/
+venv/
+.DS_Store
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
