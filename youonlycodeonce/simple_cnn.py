@@ -11,8 +11,8 @@ from torch.utils.data import DataLoader, Dataset  # đóng gói ảnh thành cá
 
 
 # 1. Cấu hình
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"  # tìm thư mục data dựa trên vị trí file code, nên chạy script từ thư mục nào cũng không làm sai đường dẫn
-IMAGE_SIZE = 64  # resize mỗi ảnh thành 64×64 để giảm chi phí tính toán
+DATA_DIR = Path(__file__).resolve().parent / "data"
+IMAGE_SIZE = 256  # resize mỗi ảnh thành 256×256 để giảm chi phí tính toán
 BATCH_SIZE = 32  # model xử lý 32 ảnh mỗi lượt
 EPOCHS = 10  # đi qua toàn bộ tập train 10 lần
 SEED = 42  # cố định seed để việc chia ảnh và khởi tạo model có thể lặp lại
@@ -30,11 +30,11 @@ image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 for label, class_name in enumerate(class_names):  # duyệt từng lớp và gán cho lớp một số nguyên, ví dụ lớp đầu là 0
     class_dir = DATA_DIR / class_name  # đường dẫn tới thư mục chứa ảnh của lớp hiện tại
-    image_paths = [  # lấy các file ảnh trực tiếp trong thư mục lớp hiện tại
+    image_paths = sorted(  # sắp xếp để cùng seed luôn tạo cùng split
         path
         for path in class_dir.iterdir()  # duyệt từng file trong thư mục lớp hiện tại
         if path.is_file() and path.suffix.lower() in image_extensions  # chỉ lấy file ảnh có đuôi trong image_extensions, lower cho chắc là không phân biệt hoa thường
-    ]
+    )
     random.shuffle(image_paths)  # xáo trộn ảnh trong từng lớp trước khi chia tập
 
     train_end = int(0.70 * len(image_paths))  # lấy 70% ảnh lớp đó cho train
@@ -129,7 +129,11 @@ model = model.to(device)
 train_labels = torch.tensor([label for _, label in train_samples])
 class_counts = torch.bincount(train_labels, minlength=len(class_names)).float()
 class_weights = len(train_samples) / (len(class_names) * class_counts)
-loss_function = nn.CrossEntropyLoss(weight=class_weights.to(device))  # dùng CrossEntropyLoss vì nó tích hợp softmax bên trong, nên không cần đưa logits vào softmax trước.
+class_weights = class_weights.to(device)
+loss_function = nn.CrossEntropyLoss(weight=class_weights)  # CrossEntropyLoss tích hợp softmax, nhận logits trực tiếp.
+metric_loss_function = nn.CrossEntropyLoss(
+    weight=class_weights, reduction="sum"
+)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)  # dùng Adam vì nó tự động điều chỉnh learning rate cho từng tham số, giúp mạng hội tụ nhanh hơn so với SGD truyền thống.
 
 print(f"Thiết bị: {device}")
@@ -140,6 +144,7 @@ print(model)
 def evaluate(data_loader):
     model.eval()
     total_loss = 0.0
+    total_loss_weight = 0.0
     total_correct = 0
     total_images = 0
 
@@ -148,20 +153,19 @@ def evaluate(data_loader):
             images = images.to(device)
             labels = labels.to(device)
             predictions = model(images)
-            loss = loss_function(predictions, labels)
-
-            total_loss += loss.item() * labels.size(0)
+            total_loss += metric_loss_function(predictions, labels).item()
+            total_loss_weight += class_weights[labels].sum().item()
             total_correct += (predictions.argmax(dim=1) == labels).sum().item()
             total_images += labels.size(0)
 
-    return total_loss / total_images, total_correct / total_images
+    return total_loss / total_loss_weight, total_correct / total_images
 
 
 # 6. Huấn luyện và lưu model tốt nhất theo validation accuracy
 checkpoint_path = (  # nơi lưu trọng số model tốt nhất theo validation accuracy
     Path(__file__).resolve().parents[1]
     / "checkpoints"
-    / "simple_cnn_baseline_v2.pt"
+    / "simple_cnn_baseline_v3.pt"
 )
 checkpoint_path.parent.mkdir(parents=True, exist_ok=True)   # tự tạo thư mục nếu chưa tồn tại
 best_val_accuracy = 0.0  # giữ accuracy validation cao nhất đã đạt
@@ -169,6 +173,7 @@ best_val_accuracy = 0.0  # giữ accuracy validation cao nhất đã đạt
 for epoch in range(EPOCHS):  # lặp qua từng epoch
     model.train()  # chuyển sang chế huấn luyện
     train_loss = 0.0
+    train_loss_weight = 0.0
     train_correct = 0
     train_images = 0
 
@@ -182,7 +187,8 @@ for epoch in range(EPOCHS):  # lặp qua từng epoch
         loss.backward()  # tính gradient cho các trọng số model theo loss function
         optimizer.step()  # cập nhật trọng số dựa trên gradient và learning rate
 
-        train_loss += loss.item() * labels.size(0)
+        train_loss += metric_loss_function(predictions.detach(), labels).item()
+        train_loss_weight += class_weights[labels].sum().item()
         train_correct += (predictions.argmax(dim=1) == labels).sum().item()
         train_images += labels.size(0)
 
@@ -190,7 +196,7 @@ for epoch in range(EPOCHS):  # lặp qua từng epoch
     train_accuracy = train_correct / train_images
     print(
         f"Epoch {epoch + 1}/{EPOCHS} | "
-        f"train loss={train_loss / train_images:.4f}, "
+        f"train loss={train_loss / train_loss_weight:.4f}, "
         f"accuracy={train_accuracy:.3f} | "
         f"val loss={val_loss:.4f}, accuracy={val_accuracy:.3f}"
     )
