@@ -1,7 +1,8 @@
-torch>=2.0.0
-torchvision>=0.15.0
-tensorflow>=2.13.0
-numpy
+# Windows/Linux có GPU NVIDIA: cài PyTorch bản CUDA trước (xem README), rồi mới cài file này
+torch>=2.6
+torchvision>=0.21
+numpy>=2.0
 matplotlib
 pillow
 jupyter
+scikit-image  # chỉ cần khi tạo lại splits/ bằng src/make_splits.py
