@@ -2,7 +2,7 @@
 
 Dự án so sánh hiệu quả giữa 3 kiến trúc Deep Learning từ đơn giản đến phức tạp trên bộ dữ liệu Freiburg Groceries (25 nhóm sản phẩm):
 1. **Model 1**: Simple CNN (Baseline), file `src/train_simple_cnn.py`
-2. **Model 2**: Deep Convolutional Neural Network (Deep CNN)
+2. **Model 2**: Deep Convolutional Neural Network (Deep CNN), file `src/train_deep_cnn.py`
 3. **Model 3**: Transfer Learning (YOLOv5 Classification Backbone)
 
 ## Hướng dẫn cài đặt & Chạy dự án cho nhóm
@@ -146,6 +146,69 @@ Cấu hình được chọn chỉ bằng val accuracy: có TTA, trung bình 10 e
 | Bỏ pooling ở khối cuối | 85,8 ± 0,4 | −0,3 | bỏ |
 
 Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool thường bỏ mất hàng và cột cuối của feature map ở khối cuối, còn MaxBlurPool thì không. Vì vậy một phần mức tăng của MaxBlurPool có thể đến từ điểm này chứ không chỉ từ việc chống răng cưa.
+
+## Model 2: Deep CNN (ResNet)
+
+`src/train_deep_cnn.py` train từ đầu một mạng kiểu ResNet, không dùng trọng số pretrained:
+
+- **Kiến trúc:**
+  - stem gồm 3 Conv 3×3 (Conv đầu bước 2) và MaxBlurPool, thu nhỏ ảnh 4 lần;
+  - 4 tầng, mỗi tầng 1 khối residual (bố cục ResNet-10), số kênh 64 → 128 → 256 → 512;
+  - Global Average Pooling, Dropout và một lớp Linear (4,9 triệu tham số, ít hơn Model 1).
+- **Khối residual:** hai Conv 3×3 và một đường tắt cộng đầu vào vào đầu ra. Khối thu nhỏ ảnh dùng đường tắt AvgPool 2×2 + Conv 1×1. γ của BatchNorm cuối mỗi khối khởi tạo bằng 0.
+- **Huấn luyện và đánh giá:** giống hệt Model 1 (dùng chung code đọc dữ liệu, augmentation, công thức train, đánh giá ở 160×160 với TTA), thêm stochastic depth 0,1: lúc train, ngẫu nhiên bỏ đường chính của một khối với xác suất tăng dần theo độ sâu.
+
+Thử cấu hình (chỉ báo val accuracy), nhớ đặt `--checkpoint` riêng để không ghi đè model và kết quả test của lần chạy cuối:
+
+```bash
+python src/train_deep_cnn.py --blocks 2,2,2,2 --checkpoint checkpoints/deep_cnn_r18.pt
+```
+
+Chạy cấu hình cuối và đánh giá trên test set, mỗi seed một lần:
+
+```bash
+python src/train_deep_cnn.py --eval_test 1 --seed 42
+python src/train_deep_cnn.py --eval_test 1 --seed 1
+python src/train_deep_cnn.py --eval_test 1 --seed 2
+```
+
+- Mỗi seed lưu `checkpoints/deep_cnn_seed<seed>.pt` và `checkpoints/deep_cnn_seed<seed>.history.json` (kèm kết quả test).
+- Thời gian: khoảng 6 phút mỗi seed trên Apple M5 Max.
+
+### Kết quả
+
+Trung bình ± độ lệch chuẩn qua 3 seed (42, 1, 2), cấu hình mặc định:
+
+| | Model 1 | Model 2 |
+|---|---|---|
+| Val, có TTA (trung bình 10 epoch cuối) | 87,1 ± 0,1 | 87,1 ± 0,5 |
+| **Test, có TTA** | **85,0 ± 0,8** | **85,8 ± 0,7** |
+| Test, không TTA | 84,2 ± 0,8 | 85,5 ± 0,9 |
+| Test, trung bình accuracy của 25 lớp | 84,0 ± 0,9 | 84,5 ± 0,7 |
+| Tham số | 6,3 triệu | 4,9 triệu |
+
+Test accuracy của Model 2 theo từng seed (42 / 1 / 2): 86,4 / 85,1 / 85,8. Model 2 hơn Model 1 khoảng 0,8 điểm, nhưng mức chênh này nằm trong độ dao động giữa các seed, nên coi như hai model ngang nhau. Model 2 tự tin thấp hơn: trên val, xác suất trung bình cho dự đoán là 63% so với 72% của Model 1, dù accuracy gần như bằng nhau (87,9% so với 87,6%, checkpoint seed 42).
+
+### Những gì đã thử
+
+Chọn cấu hình chỉ bằng val (có TTA, trung bình 10 epoch cuối, rồi trung bình 3 seed). Luật được chốt trước khi chạy:
+- vòng 1 lấy kiến trúc có val cao nhất, nếu hai kiến trúc đứng đầu chênh dưới 0,5 điểm thì lấy kiến trúc nhỏ hơn;
+- vòng 2 giữ một cách chống overfit nếu tăng ít nhất 0,5 điểm (khối SE cần 1 điểm);
+- nếu hai cách cùng đạt thì thử tổ hợp, và chỉ giữ cả hai nếu tổ hợp hơn cách tốt nhất ít nhất 0,5 điểm.
+
+| Vòng | Cấu hình | Tham số | Val accuracy (%) | Quyết định |
+|---|---|---|---|---|
+| 1 | ResNet-18 (2 khối mỗi tầng), 64 → 512 kênh | 11,2 triệu | 86,7 ± 0,1 | bỏ, ngang ResNet-10 mà lớn hơn |
+| 1 | ResNet-10 (1 khối mỗi tầng), 64 → 512 kênh | 4,9 triệu | 86,7 ± 0,4 | giữ |
+| 1 | ResNet-26 (2,3,4,3), 48 → 384 kênh | 10,5 triệu | 85,1 ± 0,9 | bỏ |
+| 1 | ResNet-18 hẹp, 32 → 256 kênh | 2,8 triệu | 83,4 ± 1,6 | bỏ |
+| 2 | ResNet-10 + stochastic depth 0,1 | 4,9 triệu | 87,9 ± 0,5 | giữ (+1,2) |
+| 2 | ResNet-10 + MixUp/CutMix (một nửa số batch) | 4,9 triệu | 87,3 ± 0,7 | đạt ngưỡng (+0,6), thử tổ hợp |
+| 2 | ResNet-10 + khối SE | 5,0 triệu | 86,7 ± 1,0 | bỏ |
+| 3 | Stochastic depth + MixUp/CutMix | 4,9 triệu | 87,1 ± 0,7 | bỏ (−0,8 so với chỉ stochastic depth) |
+| phụ | ResNet-10 bỏ hết đường tắt | 4,8 triệu | 86,1 ± 0,4 | chỉ để so sánh: đường tắt giúp +0,6 |
+
+Model 1 trong cùng điều kiện thí nghiệm đạt 87,3 ± 1,1. Các lần thử trong bảng, kể cả lần thử Model 1 này, chạy với `--num_workers 6`, còn lần chạy cuối dùng mặc định `--num_workers 8`, nên dù cùng seed, augmentation ngẫu nhiên vẫn khác: cấu hình được chọn đạt 87,9 ± 0,5 trong bảng nhưng 87,1 ± 0,5 ở mục Kết quả, ngang Model 1 (87,1 ± 0,1). Vì vậy chênh lệch dưới khoảng 1 điểm, giữa các dòng hay giữa hai model, có thể chỉ là nhiễu. Với 3.436 ảnh train và train từ đầu, mạng sâu hơn không tự động tốt hơn: độ rộng (số kênh) và cách chống overfit quan trọng hơn độ sâu.
 
 ## Lưu ý khi so sánh các model
 
