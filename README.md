@@ -89,10 +89,10 @@ Cách gom nhóm được mô tả trong `src/make_splits.py`.
   - lưu model của epoch có val accuracy cao nhất.
 - **Đánh giá:** ảnh được phóng lên 160×160, lấy trung bình dự đoán của ảnh gốc và ảnh lật ngang (TTA).
 
-Thử cấu hình (chỉ báo val accuracy):
+Thử cấu hình (chỉ báo val accuracy). Nhớ đặt `--checkpoint` riêng cho mỗi lần thử: mặc định mọi lần chạy cùng seed đều ghi vào `checkpoints/simple_cnn_seed<seed>.pt` và `checkpoints/simple_cnn_seed<seed>.history.json`, nên lần thử chạy sau sẽ xoá model và kết quả test của lần chạy cuối.
 
 ```bash
-python src/train_simple_cnn.py --epochs 50 --num_blocks 5
+python src/train_simple_cnn.py --epochs 50 --num_blocks 5 --checkpoint checkpoints/simple_cnn_try.pt
 ```
 
 Chạy cấu hình cuối và đánh giá trên test set, mỗi seed một lần:

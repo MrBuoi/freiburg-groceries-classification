@@ -10,8 +10,10 @@ Cách chia train/val/test đọc từ splits/*.txt (tạo bởi src/make_splits.
 mọi model của nhóm). Khi thử cấu hình, chỉ nhìn val; test chỉ đánh giá một lần cho cấu hình
 cuối cùng bằng cờ --eval_test 1.
 
-Thử cấu hình (chỉ báo val):
-    python src/train_simple_cnn.py --epochs 50 --num_blocks 5
+Thử cấu hình (chỉ báo val). Đặt --checkpoint riêng cho mỗi lần thử: mặc định mọi lần chạy cùng
+seed đều ghi vào checkpoints/simple_cnn_seed<seed>.pt và .history.json, nên lần thử chạy sau lần
+chạy cuối sẽ xoá model và kết quả test của lần đó:
+    python src/train_simple_cnn.py --epochs 50 --num_blocks 5 --checkpoint checkpoints/simple_cnn_try.pt
 Chạy cấu hình cuối và đánh giá test:
     python src/train_simple_cnn.py --eval_test 1
 """
