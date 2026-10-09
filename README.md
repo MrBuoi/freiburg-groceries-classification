@@ -153,9 +153,9 @@ Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool
 
 - **Kiến trúc:**
   - stem gồm 3 Conv 3×3 (Conv đầu bước 2) và MaxBlurPool, thu nhỏ ảnh 4 lần;
-  - 4 tầng, mỗi tầng 1 khối residual (bố cục ResNet-10), số kênh 64 → 128 → 256 → 512;
-  - Global Average Pooling, Dropout và một lớp Linear (4,9 triệu tham số, ít hơn Model 1).
-- **Khối residual:** hai Conv 3×3 và một đường tắt cộng đầu vào vào đầu ra. Khối thu nhỏ ảnh dùng đường tắt AvgPool 2×2 + Conv 1×1. γ của BatchNorm cuối mỗi khối khởi tạo bằng 0.
+  - 4 tầng, mỗi tầng 1 khối residual (bố cục ResNet-10), số kênh 96 → 192 → 384 → 768;
+  - Global Average Pooling, Dropout và một lớp Linear (11,1 triệu tham số).
+- **Khối residual:** hai Conv 3×3 và một đường tắt cộng đầu vào vào đầu ra. Ở khối thu nhỏ ảnh (đầu tầng 2, 3, 4), đường tắt dùng AvgPool 2×2 + Conv 1×1, còn đường chính chống răng cưa: Conv 3×3 bước 1 → BatchNorm → ReLU → BlurPool (làm mờ bằng bộ lọc [1, 2, 1] × [1, 2, 1] / 16 rồi lấy mẫu bước 2) thay cho Conv bước 2. γ của BatchNorm cuối mỗi khối khởi tạo bằng 0.
 - **Huấn luyện và đánh giá:** giống hệt Model 1 (dùng chung code đọc dữ liệu, augmentation, công thức train, đánh giá ở 160×160 với TTA), thêm stochastic depth 0,1: lúc train, ngẫu nhiên bỏ đường chính của một khối với xác suất tăng dần theo độ sâu.
 
 Thử cấu hình (chỉ báo val accuracy), nhớ đặt `--checkpoint` riêng để không ghi đè model và kết quả test của lần chạy cuối:
@@ -173,21 +173,22 @@ python src/train_deep_cnn.py --eval_test 1 --seed 2
 ```
 
 - Mỗi seed lưu `checkpoints/deep_cnn_seed<seed>.pt` và `checkpoints/deep_cnn_seed<seed>.history.json` (kèm kết quả test).
-- Thời gian: khoảng 6 phút mỗi seed trên Apple M5 Max.
+- Thời gian: khoảng 11 phút mỗi seed trên Apple M5 Max khi chạy một mình (khoảng 19 phút nếu chạy 2 seed cùng lúc).
+- Bản đầu của Model 2 (64 kênh, không chống răng cưa) chạy lại được bằng `--width 64 --aa 0`, kèm `--checkpoint` riêng (ví dụ `--checkpoint checkpoints/deep_cnn_v1_seed42.pt`) để không ghi đè model và kết quả test của Model 2.
 
 ### Kết quả
 
-Trung bình ± độ lệch chuẩn qua 3 seed (42, 1, 2), cấu hình mặc định:
+Trung bình ± độ lệch chuẩn qua 3 seed (42, 1, 2). "Model 2 bản đầu" là cấu hình trước khi nâng cấp (64 kênh, không chống răng cưa):
 
-| | Model 1 | Model 2 |
-|---|---|---|
-| Val, có TTA (trung bình 10 epoch cuối) | 87,1 ± 0,1 | 87,1 ± 0,5 |
-| **Test, có TTA** | **85,0 ± 0,8** | **85,8 ± 0,7** |
-| Test, không TTA | 84,2 ± 0,8 | 85,5 ± 0,9 |
-| Test, trung bình accuracy của 25 lớp | 84,0 ± 0,9 | 84,5 ± 0,7 |
-| Tham số | 6,3 triệu | 4,9 triệu |
+| | Model 1 | Model 2 bản đầu | Model 2 |
+|---|---|---|---|
+| Val, có TTA (trung bình 10 epoch cuối) | 87,1 ± 0,1 | 87,1 ± 0,5 | 89,5 ± 0,4 |
+| **Test, có TTA** | **85,0 ± 0,8** | **85,8 ± 0,7** | **87,2 ± 0,7** |
+| Test, không TTA | 84,2 ± 0,8 | 85,5 ± 0,9 | 87,1 ± 0,5 |
+| Test, trung bình accuracy của 25 lớp | 84,0 ± 0,9 | 84,5 ± 0,7 | 85,5 ± 1,2 |
+| Tham số | 6,3 triệu | 4,9 triệu | 11,1 triệu |
 
-Test accuracy của Model 2 theo từng seed (42 / 1 / 2): 86,4 / 85,1 / 85,8. Model 2 hơn Model 1 khoảng 0,8 điểm, nhưng mức chênh này nằm trong độ dao động giữa các seed, nên coi như hai model ngang nhau. Model 2 tự tin thấp hơn: trên val, xác suất trung bình cho dự đoán là 63% so với 72% của Model 1, dù accuracy gần như bằng nhau (87,9% so với 87,6%, checkpoint seed 42).
+Test accuracy theo từng seed (42 / 1 / 2): Model 2 87,7 / 86,4 / 87,5; bản đầu 86,4 / 85,1 / 85,8. Trên cùng tập test, Model 2 hơn bản đầu 1,3–1,7 điểm ở cả 3 seed, và hơn Model 1 khoảng 2,2 điểm. Với 751 ảnh test, 1,5 điểm chỉ ứng với khoảng 11 ảnh, nên riêng test chưa đủ để kết luận chắc. Val cho kết quả cùng chiều: trên 6 seed, seed nào Model 2 cũng hơn bản đầu (xem vòng 4 bên dưới). Tuy vậy val cũng chỉ có 760 ảnh và là tập đã dùng để chọn cấu hình, nên mức tăng trên val (+2,0) có thể cao hơn thực tế. TTA gần như không còn giúp (87,1% không TTA, 87,2% có TTA). Model 2 tự tin thấp: trên val, xác suất trung bình cho dự đoán là 60% so với 72% của Model 1, dù accuracy cao hơn (89,5% so với 87,6%, checkpoint seed 42).
 
 ### Những gì đã thử
 
@@ -208,7 +209,29 @@ Chọn cấu hình chỉ bằng val (có TTA, trung bình 10 epoch cuối, rồi
 | 3 | Stochastic depth + MixUp/CutMix | 4,9 triệu | 87,1 ± 0,7 | bỏ (−0,8 so với chỉ stochastic depth) |
 | phụ | ResNet-10 bỏ hết đường tắt | 4,8 triệu | 86,1 ± 0,4 | chỉ để so sánh: đường tắt giúp +0,6 |
 
-Model 1 trong cùng điều kiện thí nghiệm đạt 87,3 ± 1,1. Các lần thử trong bảng, kể cả lần thử Model 1 này, chạy với `--num_workers 6`, còn lần chạy cuối dùng mặc định `--num_workers 8`, nên dù cùng seed, augmentation ngẫu nhiên vẫn khác: cấu hình được chọn đạt 87,9 ± 0,5 trong bảng nhưng 87,1 ± 0,5 ở mục Kết quả, ngang Model 1 (87,1 ± 0,1). Vì vậy chênh lệch dưới khoảng 1 điểm, giữa các dòng hay giữa hai model, có thể chỉ là nhiễu. Với 3.436 ảnh train và train từ đầu, mạng sâu hơn không tự động tốt hơn: độ rộng (số kênh) và cách chống overfit quan trọng hơn độ sâu.
+Model 1 trong cùng điều kiện thí nghiệm đạt 87,3 ± 1,1. Các lần thử trong bảng, kể cả lần thử Model 1 này, chạy với `--num_workers 6`, còn lần chạy cuối dùng mặc định `--num_workers 8`, nên dù cùng seed, augmentation ngẫu nhiên vẫn khác: cấu hình được chọn đạt 87,9 ± 0,5 trong bảng nhưng 87,1 ± 0,5 khi chạy lại (cột "Model 2 bản đầu" ở mục Kết quả), ngang Model 1 (87,1 ± 0,1). Vì vậy chênh lệch dưới khoảng 1 điểm, giữa các dòng hay giữa hai model, có thể chỉ là nhiễu. Với 3.436 ảnh train và train từ đầu, mạng sâu hơn không tự động tốt hơn: độ rộng (số kênh) và cách chống overfit quan trọng hơn độ sâu.
+
+#### Vòng 4: nâng cấp sau khi đã có kết quả test của bản đầu
+
+Mọi lần chạy dùng `--num_workers 8` như lần chạy cuối của bản đầu, và chênh lệch so với bản đầu được tính theo từng cặp seed. Với thay đổi không làm đổi số tham số (chống răng cưa, stochastic depth), cùng seed cho khởi tạo, thứ tự ảnh và augmentation giống hệt bản đầu, nên mỗi cặp so sánh đúng cùng điều kiện. Đổi độ rộng hay độ sâu làm đổi số tham số, nên khác cả khởi tạo, thứ tự ảnh và augmentation (model được tạo trước khi DataLoader lấy số ngẫu nhiên); khi đó hai lần chạy chỉ chung số seed. Luật chốt trước khi chạy:
+- thay đổi giữ nguyên số tham số phải tăng trung bình ít nhất 0,5 điểm và tăng ở ít nhất 2/3 seed; thay đổi độ rộng hay độ sâu phải tăng trung bình ít nhất 0,8 điểm và tăng ở cả 3 seed;
+- nếu hai thay đổi khác loại cùng đạt thì thử tổ hợp của chúng; tổ hợp chỉ được chọn nếu hơn thay đổi đơn tốt nhất ít nhất 0,3 điểm;
+- cấu hình được chọn phải được xác nhận thêm trên seed 3, 4, 5 (cùng với bản đầu trên các seed đó): trung bình 6 seed phải tăng ít nhất 0,5 điểm, tăng ở ít nhất 4/6 seed, và trung bình 3 seed mới phải tăng.
+
+| Cấu hình (seed 42, 1, 2) | Tham số | Val accuracy (%) | So với bản đầu | Quyết định |
+|---|---|---|---|---|
+| Bản đầu: ResNet-10, 64 kênh, stochastic depth 0,1 | 4,9 triệu | 87,1 ± 0,5 | | mốc so sánh |
+| + chống răng cưa ở khối thu nhỏ | 4,9 triệu | 88,3 ± 0,5 | +1,2 (3/3 seed) | đạt; trên 6 seed +1,2, cả 6 seed đều tăng |
+| Ảnh train 160 × 160 (đánh giá 200 × 200) | 4,9 triệu | 87,6 ± 0,7 | +0,4 (2/3) | bỏ |
+| Stochastic depth 0,2 | 4,9 triệu | 87,1 ± 0,8 | +0,0 (1/3) | bỏ |
+| Stochastic depth 0,3 | 4,9 triệu | 86,5 ± 0,1 | −0,7 (0/3) | bỏ |
+| ResNet-18 + stochastic depth 0,2 | 11,2 triệu | 86,9 (seed 42, 1) | −0,5 (0/2) | bỏ |
+| 96 kênh, không chống răng cưa | 11,1 triệu | 88,1 ± 1,3 | +0,9 (2/3) | bỏ |
+| **96 kênh + chống răng cưa** | 11,1 triệu | **89,5 ± 0,4** | **+2,4 (3/3)** | **giữ**: trên 6 seed +2,0, cả 6 seed đều tăng; hơn chỉ chống răng cưa +0,8 (5/6 seed) |
+
+Do một lỗi (chống răng cưa được bật làm mặc định trong code khi các lần thử khác chưa chạy xong), 4 lần chạy bị kèm chống răng cưa ngoài ý muốn. Lần chạy seed 2 của ResNet-18 + stochastic depth 0,2 không được tính; hai seed còn lại đều không tăng, nên cấu hình này không đạt dù seed 2 ra sao. Ba lần chạy seed 42, 1, 2 của dòng "96 kênh + chống răng cưa" vốn định là 96 kênh không chống răng cưa (dòng "96 kênh, không chống răng cưa" được chạy bù sau đó). Luật chốt trước chỉ cho thử tổ hợp hai thay đổi khi cả hai cùng đạt, mà riêng 96 kênh không đạt; việc vẫn xét tổ hợp này (chỉ cần hơn chỉ chống răng cưa ít nhất 0,3 điểm) được quyết định sau khi đã thấy 3 seed đó. Vì vậy, bằng chứng không phụ thuộc vào lần chọn này chỉ gồm 3 seed mới 3, 4, 5 (trên val: hơn bản đầu +1,6; hơn chỉ chống răng cưa +0,5, tăng ở 2/3 seed) và tập test (hơn bản đầu 1,3–1,7 điểm ở cả 3 seed).
+
+Chống răng cưa ở các bước thu nhỏ là thay đổi đáng giá nhất, giống như MaxBlurPool ở Model 1. Hai thay đổi được giữ cộng gần như dồn vào nhau: riêng chống răng cưa +1,2, riêng 96 kênh +0,9 (không ổn định giữa các seed), cả hai +2,4. Mạng sâu hơn (ResNet-18), stochastic depth mạnh hơn và ảnh train lớn hơn đều không giúp.
 
 ## Lưu ý khi so sánh các model
 

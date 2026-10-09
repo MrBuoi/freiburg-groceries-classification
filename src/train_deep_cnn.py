@@ -6,11 +6,14 @@ Mỗi khối có hai Conv 3x3 và một đường tắt đưa đầu vào của 
 Đường tắt giữ nguyên đầu vào, trừ ở khối đầu của tầng 2, 3, 4: khối này thu nhỏ ảnh một nửa
 và gấp đôi số kênh, nên đường tắt lấy trung bình 2x2 rồi qua Conv 1x1 + BN để khớp kích thước
 trước khi cộng. Nhờ đường tắt, tín hiệu và gradient đi qua nhiều layer mà không yếu dần.
+Ở các khối thu nhỏ này, đường chính cũng chống răng cưa: Conv bước 1, rồi BlurPool (làm mờ rồi
+lấy mẫu bước 2) thay cho Conv bước 2, giống cách MaxBlurPool chống răng cưa ở stem và Model 1.
 
-Cấu hình mặc định có bố cục ResNet-10 (1 khối mỗi tầng, 64 → 512 kênh, 4,9 triệu tham số),
-được chọn trên val: bố cục ResNet-18 (11,2 triệu tham số) cho kết quả tương đương nên giữ
-model nhỏ hơn. Thêm stochastic depth 0,1 (lúc train, ngẫu nhiên bỏ đường chính của một số
-khối) tăng val thêm khoảng 1,2 điểm.
+Cấu hình mặc định có bố cục ResNet-10 (1 khối mỗi tầng, 96 → 768 kênh, 11,1 triệu tham số),
+được chọn trên val. Làm mạng sâu hơn không giúp: ResNet-18 (2 khối mỗi tầng) ngang ResNet-10.
+Thêm stochastic depth 0,1 (lúc train, ngẫu nhiên bỏ đường chính của một số khối) tăng val
+khoảng 1,2 điểm. Chống răng cưa ở khối thu nhỏ cùng với độ rộng 96 kênh (thay vì 64) tăng
+thêm khoảng 2 điểm nữa (6 seed, seed nào cũng tăng); chỉ chống răng cưa thì khoảng 1,2 điểm.
 
 Model 2 dùng chung với Model 1 (src/train_simple_cnn.py) cách chia train/val/test, cách đọc
 ảnh, augmentation, cách đánh giá (ảnh 160 × 160, TTA) và công thức train, để hai model được
@@ -32,6 +35,7 @@ import time
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
@@ -50,10 +54,11 @@ from train_simple_cnn import (
 # 1. Cấu hình mặc định; đổi bất kỳ khoá nào bằng --ten_khoa gia_tri trên dòng lệnh
 CONFIG = {
     "image_size": 128,  # lúc train, ảnh được cắt/thu về image_size x image_size
-    "width": 64,  # số kênh của tầng 1; mỗi tầng sau gấp đôi (64, 128, 256, 512)
+    "width": 96,  # số kênh của tầng 1; mỗi tầng sau gấp đôi (96, 192, 384, 768)
     "blocks": "1,1,1,1",  # số khối residual của 4 tầng: 1,1,1,1 = bố cục ResNet-10, 2,2,2,2 = ResNet-18
     "dropout": 0.3,  # dropout trước lớp Linear cuối
     "drop_path": 0.1,  # stochastic depth: xác suất bỏ đường chính ở khối cuối, tăng dần từ 0 ở khối đầu
+    "aa": 1,  # 1 = khối thu nhỏ của tầng 2-4 chống răng cưa: Conv bước 1 → BN → ReLU → BlurPool bước 2
     "epochs": 200,
     "batch_size": 64,
     "lr": 2e-3,  # learning rate cao nhất của lịch OneCycle
@@ -89,19 +94,46 @@ def conv_bn_relu(in_channels, out_channels, stride=1):
     ]
 
 
+class BlurPool(nn.Module):
+    """Làm mờ bằng bộ lọc cố định [1,2,1]x[1,2,1]/16 rồi lấy mẫu bước 2 (Zhang 2019, "BlurPool").
+
+    Không có tham số học. Lọc bớt chi tiết quá mịn trước khi chỉ giữ 1/4 số điểm, nên dự đoán ít đổi
+    khi vật thể dịch đi vài pixel (giống MaxBlurPool ở stem). Cạnh n cho ra ceil(n / 2), khớp với
+    đường tắt AvgPool2d(2, ceil_mode=True).
+    """
+
+    def __init__(self, channels):
+        super().__init__()
+        k = torch.tensor([1.0, 2.0, 1.0])
+        k = k[:, None] * k[None, :] / 16
+        # persistent=False: bộ lọc cố định, không lưu vào checkpoint
+        self.register_buffer("kernel", k.expand(channels, 1, 3, 3).clone(), persistent=False)
+
+    def forward(self, x):
+        x = F.pad(x, (1, 1, 1, 1), mode="reflect")
+        return F.conv2d(x, self.kernel.to(x.dtype), stride=2, groups=x.shape[1])
+
+
 class ResidualBlock(nn.Module):
     """Khối residual: đầu ra = ReLU(nhánh chính(x) + đường tắt(x)).
 
     Nhánh chính là Conv-BN-ReLU-Conv-BN. Đường tắt giữ nguyên x; riêng khối đầu của tầng
     2, 3, 4 (thu nhỏ ảnh và tăng số kênh) thì đường tắt lấy trung bình 2x2 để thu nhỏ và
-    dùng Conv 1x1 để đổi số kênh, cho khớp kích thước với nhánh chính trước khi cộng.
+    dùng Conv 1x1 để đổi số kênh, cho khớp kích thước với nhánh chính trước khi cộng; nhánh
+    chính của khối này thu nhỏ bằng BlurPool sau Conv-BN-ReLU đầu tiên (khi aa = 1).
     """
 
-    def __init__(self, in_channels, out_channels, stride, drop_path=0.0):
+    def __init__(self, in_channels, out_channels, stride, drop_path=0.0, aa=1):
         super().__init__()
         self.drop_path = drop_path
+        if stride > 1 and aa:
+            # chống răng cưa: Conv bước 1 (giữ cỡ ảnh) → BN → ReLU → BlurPool thu nhỏ một nửa,
+            # thay cho Conv bước 2 vốn chỉ tính đầu ra ở một trong mỗi 2 x 2 vị trí mà không làm mờ trước
+            first = [*conv_bn_relu(in_channels, out_channels), BlurPool(out_channels)]
+        else:
+            first = conv_bn_relu(in_channels, out_channels, stride)
         self.body = nn.Sequential(
-            *conv_bn_relu(in_channels, out_channels, stride),
+            *first,
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
         )
@@ -111,7 +143,8 @@ class ResidualBlock(nn.Module):
         if stride == 1 and in_channels == out_channels:
             self.shortcut = nn.Identity()
         else:
-            # ceil_mode: với cạnh lẻ (ví dụ 5) vẫn ra 3 như Conv bước 2 ở nhánh chính, không ra 2
+            # ceil_mode: với cạnh lẻ (ví dụ 5) vẫn ra 3 như nhánh chính (BlurPool, hoặc Conv bước 2
+            # khi aa = 0), không ra 2
             self.shortcut = nn.Sequential(
                 nn.AvgPool2d(stride, ceil_mode=True) if stride > 1 else nn.Identity(),
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
@@ -129,7 +162,7 @@ class ResidualBlock(nn.Module):
         return self.relu(out + self.shortcut(x))
 
 
-def build_model(num_classes, width=64, blocks=(1, 1, 1, 1), dropout=0.3, drop_path=0.1):
+def build_model(num_classes, width=96, blocks=(1, 1, 1, 1), dropout=0.3, drop_path=0.1, aa=1):
     model = nn.Sequential()
     # stem: 3 Conv 3x3 (Conv đầu bước 2: 128 → 64), rồi MaxBlurPool như Model 1 (64 → 32)
     model.add_module("stem", nn.Sequential(
@@ -146,7 +179,7 @@ def build_model(num_classes, width=64, blocks=(1, 1, 1, 1), dropout=0.3, drop_pa
         for j in range(num_blocks):
             stride = 2 if i > 0 and j == 0 else 1  # khối đầu của tầng 2, 3, 4 thu nhỏ một nửa
             # xác suất bỏ tăng tuyến tính: 0 ở khối đầu, drop_path ở khối cuối
-            stage.append(ResidualBlock(in_channels, out_channels, stride, drop_path * k / max(1, total - 1)))
+            stage.append(ResidualBlock(in_channels, out_channels, stride, drop_path * k / max(1, total - 1), aa))
             in_channels = out_channels
             k += 1
         model.add_module(f"stage{i + 1}", nn.Sequential(*stage))
@@ -206,7 +239,7 @@ def main():
     val_images, val_labels = load_eval_set(val_samples, eval_transform, device)
 
     num_classes = len(class_names)
-    model = build_model(num_classes, cfg["width"], blocks, cfg["dropout"], cfg["drop_path"]).to(device)
+    model = build_model(num_classes, cfg["width"], blocks, cfg["dropout"], cfg["drop_path"], cfg["aa"]).to(device)
     print(f"Số tham số: {sum(p.numel() for p in model.parameters()):,}")
 
     loss_function = nn.CrossEntropyLoss(label_smoothing=cfg["label_smoothing"])
@@ -281,7 +314,7 @@ def main():
 
     # 4. Đánh giá một lần duy nhất trên test set bằng model tốt nhất theo val
     print("\n=== Kết quả trên test set ===")
-    best_model = build_model(num_classes, cfg["width"], blocks, cfg["dropout"], cfg["drop_path"])
+    best_model = build_model(num_classes, cfg["width"], blocks, cfg["dropout"], cfg["drop_path"], cfg["aa"])
     best_model.load_state_dict(best_state)  # trọng số giữ trong bộ nhớ, không đọc lại file
     best_model = best_model.to(device)
     test_images, test_labels = load_eval_set(test_samples, eval_transform, device)
