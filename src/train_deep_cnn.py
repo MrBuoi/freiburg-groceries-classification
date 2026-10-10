@@ -10,15 +10,24 @@ trước khi cộng. Nhờ đường tắt, tín hiệu và gradient đi qua nhi
 lấy mẫu bước 2) thay cho Conv bước 2, giống cách MaxBlurPool chống răng cưa ở stem và Model 1.
 
 Cấu hình mặc định có bố cục ResNet-10 (1 khối mỗi tầng, 96 → 768 kênh, 11,1 triệu tham số),
-được chọn trên val. Làm mạng sâu hơn không giúp: ResNet-18 (2 khối mỗi tầng) ngang ResNet-10.
-Thêm stochastic depth 0,1 (lúc train, ngẫu nhiên bỏ đường chính của một số khối) tăng val
-khoảng 1,2 điểm. Chống răng cưa ở khối thu nhỏ cùng với độ rộng 96 kênh (thay vì 64) tăng
-thêm khoảng 2 điểm nữa (6 seed, seed nào cũng tăng); chỉ chống răng cưa thì khoảng 1,2 điểm.
+được chọn trên val. Làm mạng sâu hơn không giúp khi thử với 64 kênh, ảnh 128 × 128 và
+200 epoch: ResNet-18 (2 khối mỗi tầng) ngang ResNet-10. Thêm stochastic depth 0,1 (lúc train,
+ngẫu nhiên bỏ đường chính của một số khối) tăng val khoảng 1,2 điểm. Chống răng cưa ở khối thu
+nhỏ cùng với độ rộng 96 kênh (thay vì 64) tăng thêm khoảng 2 điểm nữa (6 seed, seed nào cũng
+tăng); chỉ chống răng cưa thì khoảng 1,2 điểm. Cách train cũng được chọn trên val: ảnh train
+160 × 160 và 450 epoch, thay vì 128 × 128 và 200 epoch như Model 1, tăng val thêm khoảng
+2,8 điểm (6 seed, seed nào cũng tăng). Ở ảnh 128 × 128 và 200 epoch, các kiến trúc khác trong
+slide môn học (VGG, GoogLeNet, DenseNet, AlexNet, đầu kiểu NiN), train từ đầu, đều kém
+ResNet-10 này (xem README).
 
 Model 2 dùng chung với Model 1 (src/train_simple_cnn.py) cách chia train/val/test, cách đọc
-ảnh, augmentation, cách đánh giá (ảnh 160 × 160, TTA) và công thức train, để hai model được
-so sánh công bằng: chỉ khác nhau ở kiến trúc, kể cả stochastic depth vốn chỉ dùng được cho
-khối residual.
+ảnh, augmentation, cách đánh giá (TTA, ảnh đánh giá lớn hơn ảnh train 1,25 lần) và công thức
+train (AdamW + OneCycle, label smoothing). Hai model khác nhau ở kiến trúc (kể cả stochastic
+depth, vốn chỉ dùng được cho khối residual) và ở kích thước ảnh, số epoch: Model 2 train ở
+160 × 160 trong 450 epoch (chọn trên val), Model 1 ở 128 × 128 trong 200 epoch (chưa thử
+Model 1 với ảnh 160 × 160 và 450 epoch). Khi train cùng cách (128 × 128, 200 epoch), Model 2
+hơn Model 1 khoảng 2,4 điểm val; ảnh lớn hơn và train lâu hơn thêm khoảng 2,8 điểm. Một lần
+chạy đối chứng cho thấy train lâu hơn cũng giúp Model 1 (300 epoch: +1 điểm val).
 
 Thử cấu hình (chỉ báo val). Đặt --checkpoint riêng cho mỗi lần thử: mặc định mọi lần chạy
 cùng seed đều ghi vào checkpoints/deep_cnn_seed<seed>.pt và .history.json, nên lần thử chạy
@@ -53,13 +62,13 @@ from train_simple_cnn import (
 
 # 1. Cấu hình mặc định; đổi bất kỳ khoá nào bằng --ten_khoa gia_tri trên dòng lệnh
 CONFIG = {
-    "image_size": 128,  # lúc train, ảnh được cắt/thu về image_size x image_size
+    "image_size": 160,  # lúc train, ảnh được cắt/thu về image_size x image_size (Model 1: 128)
     "width": 96,  # số kênh của tầng 1; mỗi tầng sau gấp đôi (96, 192, 384, 768)
     "blocks": "1,1,1,1",  # số khối residual của 4 tầng: 1,1,1,1 = bố cục ResNet-10, 2,2,2,2 = ResNet-18
     "dropout": 0.3,  # dropout trước lớp Linear cuối
     "drop_path": 0.1,  # stochastic depth: xác suất bỏ đường chính ở khối cuối, tăng dần từ 0 ở khối đầu
     "aa": 1,  # 1 = khối thu nhỏ của tầng 2-4 chống răng cưa: Conv bước 1 → BN → ReLU → BlurPool bước 2
-    "epochs": 200,
+    "epochs": 450,  # Model 1: 200; với Model 2, 450 epoch cho val cao hơn 200 và 300
     "batch_size": 64,
     "lr": 2e-3,  # learning rate cao nhất của lịch OneCycle
     "weight_decay": 0.05,  # weight decay của AdamW
@@ -67,7 +76,7 @@ CONFIG = {
     "crop_scale": 0.35,  # RandomResizedCrop lấy ngẫu nhiên 35–100% diện tích ảnh
     "trivial_augment": 1,  # 1 = bật TrivialAugmentWide
     "random_erasing": 0.25,  # xác suất xoá một vùng chữ nhật ngẫu nhiên trong ảnh
-    "eval_scale": 1.25,  # val/test dùng ảnh lớn hơn lúc train 1.25 lần (128 → 160)
+    "eval_scale": 1.25,  # val/test dùng ảnh lớn hơn lúc train 1.25 lần (160 → 200)
     "tta": 1,  # 1 = khi đánh giá, lấy trung bình dự đoán của ảnh gốc và ảnh lật ngang
     "seed": 42,
     "num_workers": 8,  # số tiến trình đọc ảnh song song
@@ -164,7 +173,7 @@ class ResidualBlock(nn.Module):
 
 def build_model(num_classes, width=96, blocks=(1, 1, 1, 1), dropout=0.3, drop_path=0.1, aa=1):
     model = nn.Sequential()
-    # stem: 3 Conv 3x3 (Conv đầu bước 2: 128 → 64), rồi MaxBlurPool như Model 1 (64 → 32)
+    # stem: 3 Conv 3x3 (Conv đầu bước 2: 160 → 80), rồi MaxBlurPool như Model 1 (80 → 40)
     model.add_module("stem", nn.Sequential(
         *conv_bn_relu(3, width // 2, stride=2),
         *conv_bn_relu(width // 2, width // 2),

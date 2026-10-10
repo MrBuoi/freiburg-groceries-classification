@@ -76,7 +76,7 @@ Cách gom nhóm được mô tả trong `src/make_splits.py`.
   class_names, train, val, test = load_split()  # list các cặp (đường dẫn ảnh, nhãn)
   ```
 - Không sửa tay các file trong `splits/`. Chỉ tạo lại bằng `python src/make_splits.py` (khoảng 1,5 phút) khi dữ liệu thay đổi. Script tự dừng, không ghi đè, nếu `data/` chưa đủ 25 lớp và 4.947 ảnh.
-- Chỉ dùng val để chọn cấu hình. Test chỉ đánh giá một lần, cho cấu hình cuối cùng.
+- Chỉ dùng val để chọn cấu hình. Test chỉ đánh giá một lần, cho cấu hình cuối cùng. Riêng Model 2 đã xem test 3 lần (bản đầu, bản 2, bản hiện tại), xem mục Kết quả của Model 2.
 
 ## Model 1: Simple CNN (baseline)
 
@@ -145,7 +145,7 @@ Cấu hình được chọn chỉ bằng val accuracy: có TTA, trung bình 10 e
 | SAM (rho 0,05; thời gian train gấp đôi) | 85,9 ± 1,1 | −0,3 | bỏ |
 | Bỏ pooling ở khối cuối | 85,8 ± 0,4 | −0,3 | bỏ |
 
-Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool thường bỏ mất hàng và cột cuối của feature map ở khối cuối, còn MaxBlurPool thì không. Vì vậy một phần mức tăng của MaxBlurPool có thể đến từ điểm này chứ không chỉ từ việc chống răng cưa.
+SWA, CutMix, SAM và bỏ pooling ở khối cuối chạy bằng script thử nghiệm riêng, không có trong repo. Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool thường bỏ mất hàng và cột cuối của feature map ở khối cuối, còn MaxBlurPool thì không. Vì vậy một phần mức tăng của MaxBlurPool có thể đến từ điểm này chứ không chỉ từ việc chống răng cưa.
 
 ## Model 2: Deep CNN (ResNet)
 
@@ -156,12 +156,15 @@ Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool
   - 4 tầng, mỗi tầng 1 khối residual (bố cục ResNet-10), số kênh 96 → 192 → 384 → 768;
   - Global Average Pooling, Dropout và một lớp Linear (11,1 triệu tham số).
 - **Khối residual:** hai Conv 3×3 và một đường tắt cộng đầu vào vào đầu ra. Ở khối thu nhỏ ảnh (đầu tầng 2, 3, 4), đường tắt dùng AvgPool 2×2 + Conv 1×1, còn đường chính chống răng cưa: Conv 3×3 bước 1 → BatchNorm → ReLU → BlurPool (làm mờ bằng bộ lọc [1, 2, 1] × [1, 2, 1] / 16 rồi lấy mẫu bước 2) thay cho Conv bước 2. γ của BatchNorm cuối mỗi khối khởi tạo bằng 0.
-- **Huấn luyện và đánh giá:** giống hệt Model 1 (dùng chung code đọc dữ liệu, augmentation, công thức train, đánh giá ở 160×160 với TTA), thêm stochastic depth 0,1: lúc train, ngẫu nhiên bỏ đường chính của một khối với xác suất tăng dần theo độ sâu.
+- **Huấn luyện và đánh giá:**
+  - dùng chung với Model 1 code đọc dữ liệu, augmentation và đánh giá (TTA, ảnh đánh giá lớn hơn ảnh train 1,25 lần), cùng công thức train: AdamW + OneCycle, label smoothing; như Model 1, lưu model của epoch có val accuracy cao nhất và dùng model đó để chấm test;
+  - thêm stochastic depth 0,1: lúc train, ngẫu nhiên bỏ đường chính của một khối với xác suất tăng dần theo độ sâu;
+  - ảnh train 160×160 (đánh giá ở 200×200) và 450 epoch, chọn trên val ở vòng 6–7 bên dưới. Model 1 train ở 128×128 (đánh giá ở 160×160) trong 200 epoch.
 
 Thử cấu hình (chỉ báo val accuracy), nhớ đặt `--checkpoint` riêng để không ghi đè model và kết quả test của lần chạy cuối:
 
 ```bash
-python src/train_deep_cnn.py --blocks 2,2,2,2 --checkpoint checkpoints/deep_cnn_r18.pt
+python src/train_deep_cnn.py --epochs 50 --blocks 2,2,2,2 --checkpoint checkpoints/deep_cnn_r18.pt
 ```
 
 Chạy cấu hình cuối và đánh giá trên test set, mỗi seed một lần:
@@ -173,22 +176,34 @@ python src/train_deep_cnn.py --eval_test 1 --seed 2
 ```
 
 - Mỗi seed lưu `checkpoints/deep_cnn_seed<seed>.pt` và `checkpoints/deep_cnn_seed<seed>.history.json` (kèm kết quả test).
-- Thời gian: khoảng 11 phút mỗi seed trên Apple M5 Max khi chạy một mình (khoảng 19 phút nếu chạy 2 seed cùng lúc).
-- Bản đầu của Model 2 (64 kênh, không chống răng cưa) chạy lại được bằng `--width 64 --aa 0`, kèm `--checkpoint` riêng (ví dụ `--checkpoint checkpoints/deep_cnn_v1_seed42.pt`) để không ghi đè model và kết quả test của Model 2.
+- Thời gian: khoảng 38 phút mỗi seed trên Apple M5 Max khi chạy một mình (khoảng 70 phút nếu chạy 2 seed cùng lúc).
+- Các bản trước của Model 2 chạy lại được bằng cách thêm các tham số dưới đây vào lệnh ở trên. Nhớ đặt `--checkpoint` riêng để không ghi đè model và kết quả test của bản hiện tại (tên file dưới đây là ví dụ cho seed 42; với seed khác, đổi số trong tên file cho khớp `--seed`):
+  - bản 2 (96 kênh, chống răng cưa; ảnh 128×128, 200 epoch như Model 1): `--image_size 128 --epochs 200 --checkpoint checkpoints/deep_cnn_v2_seed42.pt`;
+  - bản đầu (64 kênh, không chống răng cưa): `--image_size 128 --epochs 200 --width 64 --aa 0 --checkpoint checkpoints/deep_cnn_v1_seed42.pt`.
+- Các lần thử cần code không có trong `src/train_deep_cnn.py` (khối SE, bỏ đường tắt, MixUp/CutMix, kiến trúc của torchvision, khối NiN, các kiểu stem, nhiễu và làm mờ, cách lấy mẫu, SAM) chạy bằng script thử nghiệm riêng, không có trong repo. Các thay đổi còn lại (số khối, độ rộng, chống răng cưa, stochastic depth, kích thước ảnh, số epoch) chạy lại được bằng tham số dòng lệnh.
 
 ### Kết quả
 
-Trung bình ± độ lệch chuẩn qua 3 seed (42, 1, 2). "Model 2 bản đầu" là cấu hình trước khi nâng cấp (64 kênh, không chống răng cưa):
+Trung bình ± độ lệch chuẩn qua 3 seed (42, 1, 2). Ba bản của Model 2: bản đầu (64 kênh, không chống răng cưa), bản 2 (96 kênh, chống răng cưa; ảnh 128×128, 200 epoch như Model 1) và bản hiện tại (kiến trúc như bản 2; ảnh 160×160, 450 epoch):
 
-| | Model 1 | Model 2 bản đầu | Model 2 |
-|---|---|---|---|
-| Val, có TTA (trung bình 10 epoch cuối) | 87,1 ± 0,1 | 87,1 ± 0,5 | 89,5 ± 0,4 |
-| **Test, có TTA** | **85,0 ± 0,8** | **85,8 ± 0,7** | **87,2 ± 0,7** |
-| Test, không TTA | 84,2 ± 0,8 | 85,5 ± 0,9 | 87,1 ± 0,5 |
-| Test, trung bình accuracy của 25 lớp | 84,0 ± 0,9 | 84,5 ± 0,7 | 85,5 ± 1,2 |
-| Tham số | 6,3 triệu | 4,9 triệu | 11,1 triệu |
+| | Model 1 | Model 2: bản đầu | Model 2: bản 2 | Model 2: hiện tại |
+|---|---|---|---|---|
+| Ảnh train, số epoch | 128×128, 200 | 128×128, 200 | 128×128, 200 | 160×160, 450 |
+| Val, có TTA (trung bình 10 epoch cuối) | 87,1 ± 0,1 | 87,1 ± 0,5 | 89,5 ± 0,4 | 92,3 ± 0,0 |
+| **Test, có TTA** | **85,0 ± 0,8** | **85,8 ± 0,7** | **87,2 ± 0,7** | **89,7 ± 0,2** |
+| Test, không TTA | 84,2 ± 0,8 | 85,5 ± 0,9 | 87,1 ± 0,5 | 89,2 ± 0,2 |
+| Test, trung bình accuracy của 25 lớp | 84,0 ± 0,9 | 84,5 ± 0,7 | 85,5 ± 1,2 | 88,7 ± 0,5 |
+| Tham số | 6,3 triệu | 4,9 triệu | 11,1 triệu | 11,1 triệu |
 
-Test accuracy theo từng seed (42 / 1 / 2): Model 2 87,7 / 86,4 / 87,5; bản đầu 86,4 / 85,1 / 85,8. Trên cùng tập test, Model 2 hơn bản đầu 1,3–1,7 điểm ở cả 3 seed, và hơn Model 1 khoảng 2,2 điểm. Với 751 ảnh test, 1,5 điểm chỉ ứng với khoảng 11 ảnh, nên riêng test chưa đủ để kết luận chắc. Val cho kết quả cùng chiều: trên 6 seed, seed nào Model 2 cũng hơn bản đầu (xem vòng 4 bên dưới). Tuy vậy val cũng chỉ có 760 ảnh và là tập đã dùng để chọn cấu hình, nên mức tăng trên val (+2,0) có thể cao hơn thực tế. TTA gần như không còn giúp (87,1% không TTA, 87,2% có TTA). Model 2 tự tin thấp: trên val, xác suất trung bình cho dự đoán là 60% so với 72% của Model 1, dù accuracy cao hơn (89,5% so với 87,6%, checkpoint seed 42).
+Test accuracy theo từng seed (42 / 1 / 2): bản hiện tại 89,6 / 89,6 / 90,0; bản 2 87,7 / 86,4 / 87,5; bản đầu 86,4 / 85,1 / 85,8.
+
+- So với bản 2 (cùng kiến trúc, chỉ khác ảnh train và số epoch), bản hiện tại tăng 1,9 / 3,2 / 2,5 điểm test, tăng ở cả 3 seed. Trên val, mức tăng là +2,8 (6 seed, seed nào cũng tăng).
+- Bản hiện tại hơn Model 1 khoảng 4,7 điểm test. Khi train cùng cách với Model 1 (ảnh 128×128, 200 epoch), Model 2 (bản 2) hơn Model 1 khoảng 2,2 điểm test (val +2,4); khoảng 2,5 điểm còn lại đến từ ảnh lớn hơn và train lâu hơn, vốn chưa được thử cho Model 1 (xem "Lưu ý khi so sánh các model").
+- Với 751 ảnh test, 1 điểm chỉ ứng với khoảng 7–8 ảnh, và sai số chuẩn do chọn mẫu ảnh test vào khoảng 1,1 điểm. Độ lệch chuẩn 0,2 giữa các seed chỉ đo dao động do khởi tạo và augmentation.
+- Lần chạy cuối bằng code trong repo cho val giống hệt từng epoch với lần thử tổ hợp ở vòng 7, nên val trong bảng (92,3) cũng là val của chính các lần chạy đã dùng để chọn cấu hình và có thể hơi cao. Trên 3 seed mới 6, 7, 8 (chỉ dùng để xác nhận), val là 92,5 ± 0,2. Test thấp hơn val khoảng 2,5 điểm (bản 2: 2,3; Model 1: 2,1).
+- Test của Model 2 đã được xem 3 lần (bản đầu, bản 2, bản hiện tại). Mỗi lần chọn cấu hình chỉ dựa trên val, nhưng việc thử tiếp sau mỗi bản được quyết định khi đã thấy test của bản trước, nên test của Model 2 không hoàn toàn "chưa đụng tới" như của Model 1.
+- TTA giúp thêm 0,5–0,7 điểm ở từng seed, tức 4–5 ảnh test (89,2% không TTA).
+- Các lớp khó nhất (trung bình 3 seed): FLOUR 65%, FISH 75%, OIL 76%, VINEGAR 81%, SUGAR 81%. Các lớp dễ nhất: RICE 97%, MILK 96%, WATER 95%, TOMATO_SAUCE 95%, TEA 94%.
 
 ### Những gì đã thử
 
@@ -209,7 +224,7 @@ Chọn cấu hình chỉ bằng val (có TTA, trung bình 10 epoch cuối, rồi
 | 3 | Stochastic depth + MixUp/CutMix | 4,9 triệu | 87,1 ± 0,7 | bỏ (−0,8 so với chỉ stochastic depth) |
 | phụ | ResNet-10 bỏ hết đường tắt | 4,8 triệu | 86,1 ± 0,4 | chỉ để so sánh: đường tắt giúp +0,6 |
 
-Model 1 trong cùng điều kiện thí nghiệm đạt 87,3 ± 1,1. Các lần thử trong bảng, kể cả lần thử Model 1 này, chạy với `--num_workers 6`, còn lần chạy cuối dùng mặc định `--num_workers 8`, nên dù cùng seed, augmentation ngẫu nhiên vẫn khác: cấu hình được chọn đạt 87,9 ± 0,5 trong bảng nhưng 87,1 ± 0,5 khi chạy lại (cột "Model 2 bản đầu" ở mục Kết quả), ngang Model 1 (87,1 ± 0,1). Vì vậy chênh lệch dưới khoảng 1 điểm, giữa các dòng hay giữa hai model, có thể chỉ là nhiễu. Với 3.436 ảnh train và train từ đầu, mạng sâu hơn không tự động tốt hơn: độ rộng (số kênh) và cách chống overfit quan trọng hơn độ sâu.
+Model 1 trong cùng điều kiện thí nghiệm đạt 87,3 ± 1,1. Các lần thử trong bảng, kể cả lần thử Model 1 này, chạy với `--num_workers 6`, còn lần chạy cuối dùng mặc định `--num_workers 8`, nên dù cùng seed, augmentation ngẫu nhiên vẫn khác: cấu hình được chọn đạt 87,9 ± 0,5 trong bảng nhưng 87,1 ± 0,5 khi chạy lại (cột "Model 2: bản đầu" ở mục Kết quả), ngang Model 1 (87,1 ± 0,1). Vì vậy chênh lệch dưới khoảng 1 điểm, giữa các dòng hay giữa hai model, có thể chỉ là nhiễu. Với 3.436 ảnh train và train từ đầu, mạng sâu hơn không tự động tốt hơn: độ rộng (số kênh) và cách chống overfit quan trọng hơn độ sâu.
 
 #### Vòng 4: nâng cấp sau khi đã có kết quả test của bản đầu
 
@@ -222,7 +237,7 @@ Mọi lần chạy dùng `--num_workers 8` như lần chạy cuối của bản 
 |---|---|---|---|---|
 | Bản đầu: ResNet-10, 64 kênh, stochastic depth 0,1 | 4,9 triệu | 87,1 ± 0,5 | | mốc so sánh |
 | + chống răng cưa ở khối thu nhỏ | 4,9 triệu | 88,3 ± 0,5 | +1,2 (3/3 seed) | đạt; trên 6 seed +1,2, cả 6 seed đều tăng |
-| Ảnh train 160 × 160 (đánh giá 200 × 200) | 4,9 triệu | 87,6 ± 0,7 | +0,4 (2/3) | bỏ |
+| Ảnh train 160×160 (đánh giá 200×200) | 4,9 triệu | 87,6 ± 0,7 | +0,4 (2/3) | bỏ |
 | Stochastic depth 0,2 | 4,9 triệu | 87,1 ± 0,8 | +0,0 (1/3) | bỏ |
 | Stochastic depth 0,3 | 4,9 triệu | 86,5 ± 0,1 | −0,7 (0/3) | bỏ |
 | ResNet-18 + stochastic depth 0,2 | 11,2 triệu | 86,9 (seed 42, 1) | −0,5 (0/2) | bỏ |
@@ -231,10 +246,64 @@ Mọi lần chạy dùng `--num_workers 8` như lần chạy cuối của bản 
 
 Do một lỗi (chống răng cưa được bật làm mặc định trong code khi các lần thử khác chưa chạy xong), 4 lần chạy bị kèm chống răng cưa ngoài ý muốn. Lần chạy seed 2 của ResNet-18 + stochastic depth 0,2 không được tính; hai seed còn lại đều không tăng, nên cấu hình này không đạt dù seed 2 ra sao. Ba lần chạy seed 42, 1, 2 của dòng "96 kênh + chống răng cưa" vốn định là 96 kênh không chống răng cưa (dòng "96 kênh, không chống răng cưa" được chạy bù sau đó). Luật chốt trước chỉ cho thử tổ hợp hai thay đổi khi cả hai cùng đạt, mà riêng 96 kênh không đạt; việc vẫn xét tổ hợp này (chỉ cần hơn chỉ chống răng cưa ít nhất 0,3 điểm) được quyết định sau khi đã thấy 3 seed đó. Vì vậy, bằng chứng không phụ thuộc vào lần chọn này chỉ gồm 3 seed mới 3, 4, 5 (trên val: hơn bản đầu +1,6; hơn chỉ chống răng cưa +0,5, tăng ở 2/3 seed) và tập test (hơn bản đầu 1,3–1,7 điểm ở cả 3 seed).
 
-Chống răng cưa ở các bước thu nhỏ là thay đổi đáng giá nhất, giống như MaxBlurPool ở Model 1. Hai thay đổi được giữ cộng gần như dồn vào nhau: riêng chống răng cưa +1,2, riêng 96 kênh +0,9 (không ổn định giữa các seed), cả hai +2,4. Mạng sâu hơn (ResNet-18), stochastic depth mạnh hơn và ảnh train lớn hơn đều không giúp.
+Ở vòng 4, chống răng cưa ở các bước thu nhỏ là thay đổi đáng giá nhất, giống như MaxBlurPool ở Model 1. Hai thay đổi được giữ có hiệu quả gần như cộng dồn: riêng chống răng cưa +1,2, riêng 96 kênh +0,9 (không ổn định giữa các seed), cả hai +2,4. Mạng sâu hơn (ResNet-18) và stochastic depth mạnh hơn không giúp. Ảnh train 160×160 chỉ tăng +0,4 ở bản đầu (chưa đạt ngưỡng), nhưng tăng +1,1 ở vòng 7, trên một nền khác bản đầu cả về độ rộng, chống răng cưa và số epoch; chưa rõ khác biệt nào trong số đó làm ảnh lớn có ích hơn.
+
+#### Vòng 5–7: các kiến trúc trong slide và cải thiện bản 2 (sau khi đã có kết quả test của bản 2)
+
+Cách làm giống vòng 4. Thước đo là val accuracy có TTA, trung bình 10 epoch cuối, so sánh theo từng cặp seed (42, 1, 2) với cấu hình đang giữ, và luật được chốt trước khi chạy. Ở vòng 6–7, cấu hình đạt phải được xác nhận trên 3 seed mới (6, 7, 8), chạy cùng với cấu hình đang giữ trên các seed đó: trung bình 6 seed phải tăng ít nhất 0,5 điểm, tăng ở ít nhất 5/6 seed, và trung bình 3 seed mới phải tăng. Test chỉ chạy cho cấu hình cuối cùng.
+
+**Vòng 5: các kiến trúc trong slide "Modern CNNs"**, train từ đầu theo đúng cách train của bản 2 (cùng dữ liệu, augmentation, AdamW + OneCycle, ảnh 128×128, 200 epoch). Model 2 vốn đã dùng BatchNorm và khối residual (ResNet). Kiến trúc khác nhau nên không ghép cặp theo seed được: một kiến trúc chỉ được chọn nếu hơn bản 2 ít nhất 0,8 điểm và hơn ở cả 3 seed, rồi phải được xác nhận trên seed 3, 4, 5.
+
+| Kiến trúc | Tham số | Val accuracy (%) | So với bản 2 |
+|---|---|---|---|
+| Bản 2 (ResNet-10) | 11,1 triệu | 89,5 ± 0,4 | |
+| Bản 2 + khối NiN | 11,7 triệu | 88,7 ± 0,5 | −0,8 (0/3 seed tăng) |
+| VGG-11 có BatchNorm | 9,2 triệu | 88,6 ± 0,6 | −0,9 (1/3) |
+| DenseNet-121 | 7,0 triệu | 85,8 ± 0,7 | −3,7 (0/3) |
+| GoogLeNet | 5,6 triệu | 84,9 ± 0,5 | −4,6 (0/3) |
+| AlexNet (learning rate 3e-4, lần chạy tham chiếu) | 57,1 triệu | 65,4 ± 0,7 | −24,1 (0/3) |
+
+Không kiến trúc nào hơn bản 2, nên giữ ResNet-10.
+- Khối NiN (theo ý tưởng Network in Network): Conv 1×1 + BatchNorm + ReLU, chèn ngay trước Global Average Pooling của bản 2.
+- VGG, GoogLeNet, DenseNet và AlexNet dùng bản của torchvision, khởi tạo ngẫu nhiên. VGG dùng Global Average Pooling thay cho 2 lớp Linear 4096 chiều.
+- Ứng viên AlexNet của vòng 5 dùng learning rate 2e-3 như các model khác và không học được (val 16,0 ± 14,9), có lẽ vì không có BatchNorm, nên bị loại. Dòng AlexNet trong bảng là lần chạy tham chiếu với learning rate 3e-4, thêm ở vòng 6 để có con số so sánh. Cả hai lần chạy đều đánh giá ở 128×128, vì ở 160×160 lớp adaptive pooling của AlexNet báo lỗi trên GPU Apple.
+
+**Vòng 6: cải thiện cách train và phần stem của bản 2.** Mọi thay đổi phải tăng trung bình ít nhất 0,5 điểm, và:
+- thay đổi giữ nguyên khởi tạo, thứ tự ảnh và augmentation ngẫu nhiên của từng seed (số epoch, các kiểu stem) phải tăng ở ít nhất 2/3 seed;
+- thay đổi làm khác thứ tự ảnh hoặc augmentation ngẫu nhiên (thêm augmentation, cách lấy mẫu) phải tăng ở cả 3 seed.
+
+| Thay đổi so với bản 2 | Val accuracy (%) | So với bản 2 | Quyết định |
+|---|---|---|---|
+| **Train 300 epoch thay vì 200** | **90,2 ± 0,3** | **+0,7 (2/3)** | **giữ**: trên 6 seed +0,6, tăng ở 5/6 seed |
+| MixUp/CutMix (một nửa số batch) | 89,8 ± 0,6 | +0,3 (2/3) | bỏ |
+| Lấy mẫu cân bằng lớp một phần (trọng số mỗi ảnh 1/√n, n = số ảnh của lớp) | 89,6 ± 0,8 | +0,1 (2/3) | bỏ |
+| Bỏ bước thu nhỏ cuối stem: các tầng chạy ở độ phân giải gấp đôi, thời gian train gấp khoảng 2,5 lần | 89,6 ± 0,0 | +0,1 (2/3) | bỏ |
+| Stem chống răng cưa: Conv đầu bước 1, thêm MaxBlurPool ngay sau để thu nhỏ | 88,7 ± 0,4 | −0,8 (0/3) | bỏ |
+| Thêm nhiễu Gauss vào ảnh train | 88,4 ± 0,9 | −1,1 (0/3) | bỏ |
+| Làm mờ Gauss ảnh train | 88,3 ± 0,4 | −1,2 (0/3) | bỏ |
+
+**Vòng 7: cải thiện tiếp trên nền 300 epoch.** Mọi thay đổi phải tăng trung bình ít nhất 0,5 điểm (vòng 4 dùng 0,8 cho thay đổi độ rộng; với ngưỡng đó, 128 kênh, tăng trung bình 0,76, đã không đạt). 450 epoch và SAM giữ nguyên khởi tạo và augmentation ngẫu nhiên nên cần tăng ở ít nhất 2/3 seed; 128 kênh (khác khởi tạo), ảnh 160×160 và MixUp/CutMix phải tăng ở cả 3 seed. Đổi cỡ ảnh không làm đổi số tham số nên ở vòng 4 được xét theo luật 2/3 seed; luật chốt trước của vòng 7 xếp nó vào nhóm chặt hơn cho chắc, và nó vẫn tăng ở cả 3 seed. Nếu nhiều thay đổi cùng đạt, chỉ thử tổ hợp hai thay đổi tăng nhiều nhất, và chọn tổ hợp nếu nó hơn thay đổi đơn tốt nhất ít nhất 0,3 điểm.
+
+| Thay đổi so với 300 epoch | Tham số | Val accuracy (%) | So với 300 epoch | Quyết định |
+|---|---|---|---|---|
+| Ảnh train 160×160 (đánh giá 200×200) | 11,1 triệu | 91,3 ± 0,3 | +1,1 (3/3) | đạt, đưa vào tổ hợp |
+| Train 450 epoch | 11,1 triệu | 91,2 ± 0,9 | +1,0 (2/3) | đạt, đưa vào tổ hợp |
+| 128 kênh (128 → 1024) | 19,7 triệu | 91,0 ± 0,7 | +0,8 (3/3) | đạt, không ghép thêm |
+| SAM (rho 0,05; thời gian train gấp khoảng 2 lần) | 11,1 triệu | 90,7 ± 0,1 | +0,5 (3/3) | đạt, không ghép thêm |
+| MixUp/CutMix (một nửa số batch) | 11,1 triệu | 90,6 ± 0,3 | +0,4 (3/3) | bỏ |
+| **Ảnh 160×160 + 450 epoch** | 11,1 triệu | **92,3 ± 0,0** | **+2,1 (3/3)** | **giữ**: hơn chỉ ảnh 160×160 +1,0; trên 6 seed +2,2 so với 300 epoch, tăng ở cả 6 seed |
+
+- 128 kênh và SAM cũng đạt nhưng không vào cấu hình cuối: luật chốt trước chỉ ghép hai thay đổi tăng nhiều nhất. Một vòng 8 (thêm 128 kênh vào tổ hợp) đã được chốt luật rồi bị huỷ để giới hạn thời gian, trước khi có kết quả tổ hợp. SAM không được đưa vào vòng 8 vì tăng ít nhất mà thời gian train gấp khoảng 2 lần.
+- Cả 4 thay đổi đạt đều tăng lượng tính toán, nhưng không phải cứ tăng tính toán là giúp: bỏ bước thu nhỏ cuối stem (vòng 6) làm thời gian train gấp khoảng 2,5 lần mà chỉ +0,1, và ResNet-18 không hơn ResNet-10 (vòng 1 và 4, trên bản đầu). Có vẻ bản 2 chủ yếu thiếu số epoch, độ phân giải của ảnh đầu vào và độ rộng, hơn là cần một kiến trúc khác (vòng 5).
+- Train lâu hơn không chỉ giúp Model 2: Model 1 train 300 epoch đạt 88,1 ± 0,2 trên val (+1,0, tăng ở cả 3 seed). Đây là lần chạy đối chứng, chốt trước là không phải ứng viên và chạy sau khi Model 1 đã có kết quả test, nên không dùng để đổi cấu hình Model 1. Chưa thử Model 1 với ảnh 160×160 và 450 epoch.
+- Ở bước xác nhận của vòng 7, mốc so sánh trên seed 6, 7, 8 là các lần chạy 300 epoch của vòng 6. Chính các lần chạy này đã giúp 300 epoch được chấp nhận, nên có thể chúng cao hơn bình thường một chút; nếu vậy, việc xác nhận khó hơn chứ không dễ hơn.
+- Trong lúc chờ kết quả tổ hợp, các lần xác nhận cho riêng ảnh 160×160 (phòng khi tổ hợp không được chọn) được chạy trước trên seed 6, 7, 8. Khi tổ hợp được chọn, lần chạy seed 7 và 8 bị dừng giữa chừng theo luật chốt trước; seed 6 đã xong (+2,0 so với 300 epoch), chỉ để tham khảo.
+- Val đã được dùng để chọn cấu hình qua 7 vòng, nên val của Model 2 có thể cao hơn thực tế. Test không được dùng để chọn cấu hình nên là con số khách quan hơn (xem lưu ý ở mục Kết quả).
 
 ## Lưu ý khi so sánh các model
 
+- Model 2 train ở ảnh lớn hơn và lâu hơn Model 1 (160×160 và 450 epoch, so với 128×128 và 200 epoch). Hai giá trị này của Model 2 được chọn trên val ở vòng 6–7; Model 1 thì chưa được thử với ảnh 160×160 và 450 epoch, chỉ có một lần chạy đối chứng 300 epoch (tăng khoảng 1 điểm val, không dùng để đổi cấu hình). Vì vậy chênh lệch giữa hai model gồm cả phần do kích thước ảnh và số epoch, không chỉ do kiến trúc. Để so riêng hai kiến trúc với cùng cách train, xem cột "Model 2: bản 2" (ảnh 128×128, 200 epoch như Model 1): hơn Model 1 khoảng 2,4 điểm val và 2,2 điểm test.
+- Test của Model 2 đã được xem 3 lần (bản đầu, bản 2, bản hiện tại), còn test của Model 1 chỉ một lần. Mỗi bản của Model 2 chỉ được chọn bằng val, nhưng việc cải thiện tiếp được quyết định sau khi đã thấy test của bản trước, nên con số test của Model 2 có thể hơi lạc quan hơn.
 - Báo cáo trung bình ± độ lệch chuẩn qua ít nhất 3 seed (`--seed`). Với 751 ảnh test, chênh lệch dưới khoảng 2–3 điểm chưa chắc có ý nghĩa.
 - Không so trực tiếp với 78,9% của bài báo gốc. Bài báo dùng CaffeNet đã pretrain trên ImageNet và chia 5 fold ngẫu nhiên theo từng ảnh, cách chia này cũng bị rò rỉ ảnh cùng cảnh như mô tả ở trên.
 - `src/train_baseline.py` dùng cách chia riêng nên không chung test set với các model trên.
