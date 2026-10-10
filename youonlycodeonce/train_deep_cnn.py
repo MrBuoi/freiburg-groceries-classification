@@ -20,7 +20,7 @@ tăng); chỉ chống răng cưa thì khoảng 1,2 điểm. Cách train cũng đ
 slide môn học (VGG, GoogLeNet, DenseNet, AlexNet, đầu kiểu NiN), train từ đầu, đều kém
 ResNet-10 này (xem README).
 
-Model 2 dùng chung với Model 1 (src/train_simple_cnn.py) cách chia train/val/test, cách đọc
+Model 2 dùng chung với Model 1 (youonlycodeonce/train_simple_cnn.py) cách chia train/val/test, cách đọc
 ảnh, augmentation, cách đánh giá (TTA, ảnh đánh giá lớn hơn ảnh train 1,25 lần) và công thức
 train (AdamW + OneCycle, label smoothing). Hai model khác nhau ở kiến trúc (kể cả stochastic
 depth, vốn chỉ dùng được cho khối residual) và ở kích thước ảnh, số epoch: Model 2 train ở
@@ -32,9 +32,9 @@ chạy đối chứng cho thấy train lâu hơn cũng giúp Model 1 (300 epoch:
 Thử cấu hình (chỉ báo val). Đặt --checkpoint riêng cho mỗi lần thử: mặc định mọi lần chạy
 cùng seed đều ghi vào checkpoints/deep_cnn_seed<seed>.pt và .history.json, nên lần thử chạy
 sau lần chạy cuối sẽ xoá model và kết quả test của lần đó:
-    python src/train_deep_cnn.py --epochs 50 --blocks 2,2,2,2 --checkpoint checkpoints/deep_cnn_r18.pt
+    python youonlycodeonce/train_deep_cnn.py --epochs 50 --blocks 2,2,2,2 --checkpoint checkpoints/deep_cnn_r18.pt
 Chạy cấu hình cuối và đánh giá test:
-    python src/train_deep_cnn.py --eval_test 1 --seed 42
+    python youonlycodeonce/train_deep_cnn.py --eval_test 1 --seed 42
 """
 
 import argparse
@@ -50,6 +50,7 @@ from torch.utils.data import DataLoader
 
 from train_simple_cnn import (
     ROOT,
+    SPLIT_DIR,
     GroceryImages,
     accuracy,
     build_transforms,
@@ -82,7 +83,7 @@ CONFIG = {
     "num_workers": 8,  # số tiến trình đọc ảnh song song
     "eval_test": 0,  # 1 = đánh giá test set ở cuối; chỉ bật cho cấu hình cuối cùng đã chọn bằng val
     "data_dir": str(ROOT / "data"),
-    "split_dir": str(ROOT / "splits"),
+    "split_dir": str(SPLIT_DIR),
     "checkpoint": "",  # để trống = checkpoints/deep_cnn_seed<seed>.pt, mỗi seed một file
 }
 

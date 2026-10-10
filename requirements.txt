@@ -7,4 +7,4 @@ scikit-learn
 matplotlib
 pillow
 jupyter
-scikit-image  # chỉ cần khi tạo lại splits/ bằng src/make_splits.py
+scikit-image  # chỉ cần khi tạo lại youonlycodeonce/splits/ bằng youonlycodeonce/make_splits.py

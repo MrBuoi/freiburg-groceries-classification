@@ -1,2 +1,0 @@
-# Chỉ cần cho src/mnist.py (Keras). TensorFlow chưa hỗ trợ Python 3.14, nên dùng Python 3.10–3.13
-tensorflow>=2.13.0

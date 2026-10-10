@@ -6,16 +6,16 @@ rồi Global Average Pooling, Dropout và một lớp Linear. Accuracy được 
 huấn luyện: augmentation mạnh, label smoothing, lịch learning rate OneCycle, đánh giá ở
 ảnh lớn hơn lúc train và TTA (cộng thêm dự đoán của ảnh lật ngang).
 
-Cách chia train/val/test đọc từ splits/*.txt (tạo bởi src/make_splits.py, dùng chung cho
-mọi model của nhóm). Khi thử cấu hình, chỉ nhìn val; test chỉ đánh giá một lần cho cấu hình
+Cách chia train/val/test đọc từ youonlycodeonce/splits/*.txt (tạo bởi youonlycodeonce/make_splits.py,
+dùng chung cho Model 1 và Model 2). Khi thử cấu hình, chỉ nhìn val; test chỉ đánh giá một lần cho cấu hình
 cuối cùng bằng cờ --eval_test 1.
 
 Thử cấu hình (chỉ báo val). Đặt --checkpoint riêng cho mỗi lần thử: mặc định mọi lần chạy cùng
 seed đều ghi vào checkpoints/simple_cnn_seed<seed>.pt và .history.json, nên lần thử chạy sau lần
 chạy cuối sẽ xoá model và kết quả test của lần đó:
-    python src/train_simple_cnn.py --epochs 50 --num_blocks 5 --checkpoint checkpoints/simple_cnn_try.pt
+    python youonlycodeonce/train_simple_cnn.py --epochs 50 --num_blocks 5 --checkpoint checkpoints/simple_cnn_try.pt
 Chạy cấu hình cuối và đánh giá test:
-    python src/train_simple_cnn.py --eval_test 1
+    python youonlycodeonce/train_simple_cnn.py --eval_test 1
 """
 
 import argparse
@@ -30,7 +30,8 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import v2
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]  # gốc repo: data/ và checkpoints/ nằm ở đây
+SPLIT_DIR = Path(__file__).resolve().parent / "splits"  # youonlycodeonce/splits
 MEAN = (0.521, 0.458, 0.391)  # mean và std từng kênh RGB, tính trên tập train
 STD = (0.259, 0.247, 0.245)
 
@@ -56,7 +57,7 @@ CONFIG = {
     "num_workers": 8,  # số tiến trình đọc ảnh song song
     "eval_test": 0,  # 1 = đánh giá test set ở cuối; chỉ bật cho cấu hình cuối cùng đã chọn bằng val
     "data_dir": str(ROOT / "data"),
-    "split_dir": str(ROOT / "splits"),
+    "split_dir": str(SPLIT_DIR),
     "checkpoint": "",  # để trống = checkpoints/simple_cnn_seed<seed>.pt, mỗi seed một file
 }
 
@@ -69,13 +70,13 @@ def parse_config():
 
 
 # 2. Đọc cách chia train/val/test dùng chung (mỗi dòng: LỚP/TÊN_FILE.png)
-def load_split(data_dir=ROOT / "data", split_dir=ROOT / "splits"):
+def load_split(data_dir=ROOT / "data", split_dir=SPLIT_DIR):
     """Nhãn là chỉ số của tên lớp theo thứ tự bảng chữ cái, giống nhau ở mọi model.
     Đường dẫn mặc định tính từ vị trí file này, nên gọi từ thư mục nào cũng được."""
     splits = {}
     for name in ("train", "val", "test"):
         split_file = split_dir / f"{name}.txt"
-        if not split_file.exists():  # splits/ có sẵn trong repo, không cần tạo lại
+        if not split_file.exists():  # youonlycodeonce/splits/ có sẵn trong repo, không cần tạo lại
             raise FileNotFoundError(
                 f"Không thấy {split_file}. Hãy chạy lệnh từ thư mục gốc của repo hoặc sửa --split_dir."
             )

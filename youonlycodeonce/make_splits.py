@@ -16,13 +16,13 @@ giống nhau thành một nhóm rồi chia theo nhóm, 70/15/15 trong từng l�
      nhau như vậy, trong khi gần một nửa các cặp khớp rất mạnh (≥ 30 điểm) có số file liền nhau.
      Luật này bắt thêm các ảnh chụp lại cùng kệ hàng nhưng khớp yếu hơn.
 
-Kết quả ghi vào splits/{train,val,test}.txt (mỗi dòng một ảnh, dạng LỚP/TÊN_FILE.png) và
-splits/groups.csv. train_simple_cnn.py và các model khác đọc các file này, nên chỉ cần chạy lại
+Kết quả ghi vào youonlycodeonce/splits/{train,val,test}.txt (mỗi dòng một ảnh, dạng LỚP/TÊN_FILE.png)
+và youonlycodeonce/splits/groups.csv. train_simple_cnn.py và train_deep_cnn.py đọc các file này, nên chỉ cần chạy lại
 script khi dữ liệu thay đổi. Script dừng, không ghi đè splits/, nếu data/ không có đủ 25 lớp và
 4.947 ảnh. Cần thêm thư viện: pip install scikit-image
 
 Chạy:
-    python src/make_splits.py
+    python youonlycodeonce/make_splits.py
 """
 
 import hashlib
@@ -37,9 +37,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]  # gốc repo, nơi có data/
 DATA_DIR = ROOT / "data"
-SPLIT_DIR = ROOT / "splits"
+SPLIT_DIR = Path(__file__).resolve().parent / "splits"  # youonlycodeonce/splits
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 EXPECTED_CLASSES, EXPECTED_IMAGES = 25, 4947  # bộ Freiburg Groceries đầy đủ
 SPLIT_SEED = 42
