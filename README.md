@@ -254,7 +254,7 @@ python youonlycodeonce/train_simple_cnn.py --eval_test 1 --seed 1
 python youonlycodeonce/train_simple_cnn.py --eval_test 1 --seed 2
 ```
 
-- Mọi tham số trong `CONFIG` đổi được bằng `--ten_tham_so gia_tri`.
+- Tham số dòng lệnh: `--seed`, `--epochs`, `--num_blocks`, `--batch_size`, `--num_workers`, `--eval_test`, `--data_dir`, `--checkpoint`. Các siêu tham số còn lại (cỡ ảnh, số filter, dropout, learning rate, weight decay, label smoothing, augmentation) là hằng số viết hoa ở đầu file `youonlycodeonce/train_simple_cnn.py`.
 - Mỗi seed lưu riêng hai file trong `checkpoints/`:
   - `simple_cnn_seed<seed>.pt`: trọng số;
   - `simple_cnn_seed<seed>.history.json`: loss và accuracy từng epoch (để vẽ biểu đồ), cùng kết quả test nếu chạy với `--eval_test 1`.
@@ -296,7 +296,7 @@ Cấu hình được chọn chỉ bằng val accuracy: có TTA, trung bình 10 e
 | SAM (rho 0,05; thời gian train gấp đôi) | 85,9 ± 1,1 | −0,3 | bỏ |
 | Bỏ pooling ở khối cuối | 85,8 ± 0,4 | −0,3 | bỏ |
 
-SWA, CutMix, SAM và bỏ pooling ở khối cuối chạy bằng script thử nghiệm riêng, không có trong repo. Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool thường bỏ mất hàng và cột cuối của feature map ở khối cuối, còn MaxBlurPool thì không. Vì vậy một phần mức tăng của MaxBlurPool có thể đến từ điểm này chứ không chỉ từ việc chống răng cưa.
+SWA, CutMix, SAM và bỏ pooling ở khối cuối chạy bằng script thử nghiệm riêng, không có trong repo. Hai dòng "Cấu hình gốc (MaxPool thường)" và "Augmentation mạnh hơn" chạy bằng phiên bản trước của script, khi các thiết lập này còn là tham số dòng lệnh; với script hiện tại, muốn chạy lại thì thay MaxBlurPool bằng `nn.MaxPool2d(2)` trong `build_model`, hoặc sửa `CROP_SCALE`, `RANDOM_ERASING` ở đầu file. Với SWA, val accuracy là của model trung bình. Ở ảnh 160×160, MaxPool thường bỏ mất hàng và cột cuối của feature map ở khối cuối, còn MaxBlurPool thì không. Vì vậy một phần mức tăng của MaxBlurPool có thể đến từ điểm này chứ không chỉ từ việc chống răng cưa.
 
 ## Model 2: Deep CNN (ResNet)
 
@@ -328,6 +328,7 @@ python youonlycodeonce/train_deep_cnn.py --eval_test 1 --seed 2
 
 - Mỗi seed lưu `checkpoints/deep_cnn_seed<seed>.pt` và `checkpoints/deep_cnn_seed<seed>.history.json` (kèm kết quả test).
 - Thời gian: khoảng 38 phút mỗi seed trên Apple M5 Max khi chạy một mình (khoảng 70 phút nếu chạy 2 seed cùng lúc).
+- Tham số dòng lệnh: `--seed`, `--epochs`, `--image_size`, `--width`, `--blocks`, `--aa`, `--drop_path`, `--batch_size`, `--num_workers`, `--eval_test`, `--data_dir`, `--checkpoint`. Các siêu tham số còn lại là hằng số viết hoa ở đầu file `youonlycodeonce/train_deep_cnn.py`; phần đọc dữ liệu, augmentation và đánh giá dùng lại hàm của `train_simple_cnn.py`.
 - Các bản trước của Model 2 chạy lại được bằng cách thêm các tham số dưới đây vào lệnh ở trên. Nhớ đặt `--checkpoint` riêng để không ghi đè model và kết quả test của bản hiện tại (tên file dưới đây là ví dụ cho seed 42; với seed khác, đổi số trong tên file cho khớp `--seed`):
   - bản 2 (96 kênh, chống răng cưa; ảnh 128×128, 200 epoch như Model 1): `--image_size 128 --epochs 200 --checkpoint checkpoints/deep_cnn_v2_seed42.pt`;
   - bản đầu (64 kênh, không chống răng cưa): `--image_size 128 --epochs 200 --width 64 --aa 0 --checkpoint checkpoints/deep_cnn_v1_seed42.pt`.
