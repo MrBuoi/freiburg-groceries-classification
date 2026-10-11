@@ -5,6 +5,8 @@ Dự án so sánh 3 model trên bộ dữ liệu Freiburg Groceries (25 nhóm s�
 2. **Model 2**: Deep CNN kiểu ResNet-10 train từ đầu, file `youonlycodeonce/train_deep_cnn.py`
 3. **Model 3**: Transfer learning từ ResNet50 đã pretrain trên ImageNet, file `youonlycodeonce/train_resnet50.py`
 
+Ngoài ra có một **baseline**: kiến trúc như Model 1 nhưng không augmentation và train ngắn với early stopping, file `youonlycodeonce/train_baseline.py`. Vì cách train cũng khác, chênh lệch giữa Model 1 và baseline không chỉ do augmentation (xem mục "Baseline và early stopping").
+
 ## Cấu trúc thư mục
 
 ```text
@@ -16,6 +18,7 @@ youonlycodeonce/
   train_simple_cnn.py    Model 1
   train_deep_cnn.py      Model 2
   train_resnet50.py      Model 3
+  train_baseline.py      baseline: như Model 1 nhưng không augmentation, train ngắn với early stopping
   make_splits.py         tạo cách chia theo nhóm (splits/)
   splits/                cách chia theo nhóm: train.txt, val.txt, test.txt, groups.csv
   splits_ngaunhien/      cách chia ngẫu nhiên theo từng ảnh, chỉ dùng để so sánh
@@ -235,7 +238,7 @@ Cách gom nhóm được mô tả trong `youonlycodeonce/make_splits.py`. Notebo
 
 - Cách gom nhóm dựa vào ngưỡng số điểm khớp giữa hai ảnh, nên vẫn có thể sót vài cặp gần giống (ví dụ NUTS0037 ở test và NUTS0020 ở train). Con số 0 trong bảng trên là theo chính các nhóm này.
 - Cách chia `ngaunhien` là cách chia 70/15/15 theo từng ảnh của bạn cùng nhóm, lưu lại thành danh sách để lần nào chạy cũng giống nhau (script gốc lấy file theo thứ tự hệ điều hành trả về, nên mỗi máy chia ra một kiểu). Có 4 cặp ảnh trùng y hệt bị tách sang train và test.
-- `split_data.py` chép ảnh trong `data/` theo danh sách vào `artifacts/split_data/<cách chia>/{train,val,test}/<LỚP>/`, là thư mục mà ba script train đọc. Chạy một lần cho mỗi cách chia, mỗi lần chép khoảng 520 MB; chạy lại thì thư mục cũ bị xoá và chép lại từ đầu:
+- `split_data.py` chép ảnh trong `data/` theo danh sách vào `artifacts/split_data/<cách chia>/{train,val,test}/<LỚP>/`, là thư mục mà 4 script train (3 model và baseline) đọc. Chạy một lần cho mỗi cách chia, mỗi lần chép khoảng 520 MB; chạy lại thì thư mục cũ bị xoá và chép lại từ đầu:
   ```bash
   python youonlycodeonce/split_data.py --split nhom
   python youonlycodeonce/split_data.py --split ngaunhien
@@ -251,14 +254,15 @@ Mỗi script đọc ảnh đã chia, train, giữ lại trọng số của epoch
 KERAS_BACKEND=torch python youonlycodeonce/train_simple_cnn.py --split nhom --seed 42
 KERAS_BACKEND=torch python youonlycodeonce/train_deep_cnn.py --split nhom --seed 42
 KERAS_BACKEND=torch python youonlycodeonce/train_resnet50.py --split nhom --seed 42
+KERAS_BACKEND=torch python youonlycodeonce/train_baseline.py --split nhom --seed 42
 ```
 
-- Tham số: `--split` (`nhom` hoặc `ngaunhien`), `--seed`, `--epochs` (với Model 3 là số epoch của giai đoạn fine-tune, mặc định 20). Các siêu tham số khác viết thẳng trong code.
+- Tham số: `--split` (`nhom` hoặc `ngaunhien`), `--seed`, `--epochs` (với Model 3 là số epoch của giai đoạn fine-tune, mặc định 20; với baseline là số epoch tối đa, mặc định 100). Baseline có thêm `--lr` (mặc định 3e-3). Các siêu tham số khác viết thẳng trong code.
 - Kết quả lưu trong `checkpoints/`, chạy lại cùng model, cách chia và seed sẽ ghi đè:
   - `<model>_<cách chia>_seed<seed>.weights.h5`: trọng số tốt nhất. Keras lưu kèm trạng thái của optimizer nên file nặng gấp khoảng 3 lần model.
-  - `<model>_<cách chia>_seed<seed>.json`: val tốt nhất, test có và không TTA, macro-F1, accuracy trung bình của 25 lớp, loss và accuracy từng epoch.
-- Thời gian trên Apple M5 Max khi chạy một mình: Model 1 khoảng 45 phút, Model 2 khoảng 2 giờ 50 phút, Model 3 khoảng 35 phút. Bộ nhớ: Model 1 khoảng 6 GB, Model 2 8–12 GB, Model 3 15–17 GB.
-- Cả 3 script gọi `gc.collect()` cuối mỗi epoch. Khi chạy bằng PyTorch, Keras để sót tensor của nhiều bước train trong các vòng tham chiếu mà bộ dọn rác tự động của Python dọn không kịp; không gọi `gc.collect()` thì bộ nhớ của Model 3 tăng khoảng 6–7 GB sau mỗi epoch fine-tune.
+  - `<model>_<cách chia>_seed<seed>.json`: val tốt nhất, test có và không TTA (baseline chỉ có test không TTA), macro-F1, accuracy trung bình của 25 lớp, loss và accuracy từng epoch.
+- Thời gian trên Apple M5 Max khi chạy một mình: baseline khoảng 13 phút (dừng ở epoch 64), Model 1 khoảng 42 phút, Model 2 khoảng 2 giờ 50 phút, Model 3 khoảng 35 phút. Bộ nhớ: baseline và Model 1 khoảng 7 GB, Model 2 8–12 GB, Model 3 15–17 GB.
+- Cả 4 script gọi `gc.collect()` cuối mỗi epoch. Khi chạy bằng PyTorch, Keras để sót tensor của nhiều bước train trong các vòng tham chiếu mà bộ dọn rác tự động của Python dọn không kịp; không gọi `gc.collect()` thì bộ nhớ của Model 3 tăng khoảng 6–7 GB sau mỗi epoch fine-tune.
 - Chạy lại cùng seed không cho kết quả giống hệt, vì augmentation chạy song song trong `tf.data`.
 
 ### Model 1: Simple CNN
@@ -267,6 +271,12 @@ KERAS_BACKEND=torch python youonlycodeonce/train_resnet50.py --split nhom --seed
 - **Dữ liệu:** ảnh train 128×128; augmentation gồm phóng to ngẫu nhiên vào giữa ảnh (tới 40%), lật ngang, một phép RandAugment ngẫu nhiên cho mỗi ảnh, và xoá một vùng chữ nhật ở 25% số ảnh (RandomErasing).
 - **Huấn luyện:** 200 epoch, batch 64, AdamW (weight decay 0,05), label smoothing 0,1. Learning rate tăng tuyến tính lên 2e-3 trong 30% số bước đầu rồi giảm theo cosine về 0.
 - **Đánh giá:** ảnh val/test 160×160, lớn hơn ảnh train 1,25 lần vì ảnh train bị phóng to. Ở test, lấy trung bình dự đoán của ảnh gốc và ảnh lật ngang (TTA).
+
+### Baseline: Model 1 không augmentation
+
+- **Kiến trúc:** như Model 1, chỉ bỏ lớp RandomErasing (lớp này là một phép augmentation, chỉ chạy lúc train).
+- **Dữ liệu:** ảnh train, val và test đều chỉ được thu về 128×128. Không augmentation, không TTA.
+- **Huấn luyện:** batch 64, AdamW (weight decay 0,05), label smoothing 0,1 như Model 1, nhưng learning rate cố định 3e-3 thay cho warmup + cosine. Val accuracy không tăng trong 5 epoch thì learning rate giảm một nửa (`ReduceLROnPlateau`), không tăng trong 15 epoch thì dừng (`EarlyStopping`), tối đa 100 epoch. Learning rate được chọn bằng val, xem mục "Baseline và early stopping".
 
 ### Model 2: Deep CNN (ResNet-10)
 
@@ -302,10 +312,12 @@ Kết quả của công thức ban đầu nằm ở dòng "Model 3 (công thức
 
 ## Kết quả
 
-Accuracy (%), mỗi cấu hình train một lần với seed 42. Cột "Test" có TTA:
+Accuracy (%), mỗi cấu hình train một lần với seed 42. Cột "Test" có TTA, trừ baseline (không dùng TTA nên hai cột test như nhau):
 
 | Model | Cách chia | Val tốt nhất (epoch) | Test | Test không TTA | Macro-F1 | Accuracy trung bình 25 lớp |
 |---|---|---|---|---|---|---|
+| Baseline (không augmentation, early stopping) | theo nhóm | 75,7 (49) | **73,0** | 73,0 | 70,4 | 69,5 |
+| Baseline (không augmentation, early stopping) | ngẫu nhiên | 79,8 (84) | 79,9 | 79,9 | 79,4 | 78,9 |
 | Model 1 | theo nhóm | 84,9 (179) | **84,6** | 83,4 | 83,7 | 83,1 |
 | Model 1 | ngẫu nhiên | 85,8 (174) | 86,1 | 85,2 | 86,4 | 86,0 |
 | Model 2 | theo nhóm | 90,5 (369) | **88,9** | 88,0 | 88,6 | 88,0 |
@@ -319,6 +331,7 @@ So sánh cặp trên cùng 751 ảnh test của cách chia theo nhóm. Khoảng 
 
 | So sánh | Chênh lệch test | Khoảng tin cậy 95% |
 |---|---|---|
+| Model 1 so với baseline | +11,6 | [+8,4; +14,9] |
 | Model 3 so với Model 1 | +6,8 | [+3,9; +9,6] |
 | Model 2 so với Model 1 | +4,4 | [+2,0; +6,8] |
 | Model 3 so với Model 2 | +2,4 | [−0,3; +5,2] |
@@ -327,6 +340,7 @@ Tách test của cách chia ngẫu nhiên thành 212 ảnh có ảnh cùng nhóm
 
 | Model | Theo nhóm | Ngẫu nhiên: cả tập test | 212 ảnh rò rỉ | 544 ảnh còn lại |
 |---|---|---|---|---|
+| Baseline | 73,0 | 79,9 | 93,9 | 74,4 |
 | Model 1 | 84,6 | 86,1 | 98,1 | 81,4 |
 | Model 2 | 88,9 | 91,7 | 99,1 | 88,8 |
 | Model 3 | 91,3 | 93,0 | 98,1 | 91,0 |
@@ -336,11 +350,12 @@ Tách test của cách chia ngẫu nhiên thành 212 ảnh có ảnh cùng nhóm
 - **Thứ tự Model 3 > Model 2 > Model 1 có độ chắc chắn khác nhau.**
   - Model 2 hơn Model 1 và Model 3 hơn Model 1 là rõ ràng: khoảng tin cậy không chứa 0.
   - Model 3 hơn Model 2 2,4 điểm (50 ảnh Model 3 đúng mà Model 2 sai, 32 ảnh ngược lại). Khoảng tin cậy vẫn chứa 0, nên với một lần chạy chưa khẳng định chắc được.
-- **Cách chia ngẫu nhiên cho điểm cao hơn 1,6–2,7 điểm, và phần chênh này đến từ ảnh rò rỉ.**
-  - Model đoán đúng 98–99% số ảnh rò rỉ.
-  - Trên các ảnh không rò rỉ, accuracy ngang hoặc thấp hơn cách chia theo nhóm (chênh từ −3,1 đến −0,2 điểm).
-  - Ảnh rò rỉ cộng điểm không đều: so với 544 ảnh còn lại, Model 1 được cộng 4,7 điểm, Model 2 2,9, Model 3 2,0. Model yếu được cộng nhiều hơn nên khoảng cách giữa các model bị thu hẹp.
-  - Với công thức ban đầu của Model 3, mức chênh là 4,5 điểm, trong đó khoảng 3,2 điểm đến từ ảnh rò rỉ.
+- **Baseline thấp hơn Model 1 11,6 điểm test** (khoảng tin cậy không chứa 0). Baseline có cùng kiến trúc nhưng không augmentation và train ngắn với early stopping. Không có augmentation, model học thuộc ảnh train: train accuracy gần 100% từ epoch 22, còn val cao nhất chỉ 75,7%. Mức chênh 11,6 điểm đến từ augmentation (kèm TTA) cùng với cách train 200 epoch: cùng cách train ngắn thì Model 1 chỉ hơn baseline 1,9 điểm (xem mục "Baseline và early stopping").
+- **Với Model 1–3, cách chia ngẫu nhiên cho điểm cao hơn 1,6–2,7 điểm, và phần chênh này đến từ ảnh rò rỉ.**
+  - Model 1–3 đoán đúng 98–99% số ảnh rò rỉ, baseline 94%.
+  - Trên các ảnh không rò rỉ, accuracy của Model 1–3 ngang hoặc thấp hơn cách chia theo nhóm (chênh từ −3,1 đến −0,2 điểm).
+  - Ảnh rò rỉ cộng điểm không đều: so với 544 ảnh còn lại, baseline được cộng 5,4 điểm, Model 1 4,7, Model 2 2,9, Model 3 2,0. Model yếu được cộng nhiều hơn nên khoảng cách giữa các model bị thu hẹp.
+  - Với baseline và công thức ban đầu của Model 3, mức chênh lớn hơn: 6,9 và 4,5 điểm, trong đó 5,4 và khoảng 3,2 điểm đến từ ảnh rò rỉ.
 
   Vì vậy các kết luận của dự án dựa trên cách chia theo nhóm.
 - **So với bản PyTorch trước đây.** Bản PyTorch của Model 1 và Model 2 (commit `77331de`, cùng cách chia theo nhóm, trung bình 3 seed) đạt test 85,0 ± 0,8 và 89,7 ± 0,2. Bản Keras với seed 42 thấp hơn 0,5 và 0,8 điểm.
@@ -368,6 +383,31 @@ Các công thức dưới đây được so sánh chỉ bằng val (seed 42, tru
 - **Model 3 vẫn là ResNet50.** ConvNeXtTiny hơn B 0,4 điểm, dưới ngưỡng 1 điểm để đề xuất đổi backbone, nhưng train nhanh gấp khoảng 2 lần trên GPU của Mac (16 so với 33 phút).
 - Test chỉ được tính một lần, cho công thức B.
 - Mỗi công thức chỉ chạy một seed, nên chênh lệch dưới khoảng 1 điểm giữa B, BBN và ConvNeXtTiny có thể chỉ là nhiễu.
+
+## Baseline và early stopping
+
+Thử một cách train ngắn hơn 200 epoch: learning rate cố định và cao hơn, giảm một nửa khi val không tăng trong 5 epoch, dừng khi val không tăng trong 15 epoch, tối đa 100 epoch. Áp cho baseline và cho Model 1 (Model 1 giữ nguyên augmentation và TTA). So sánh bằng val (seed 42, cách chia theo nhóm), với luật chọn chốt trước khi chạy:
+- learning rate chọn giữa 3e-3 và 6e-3: lấy cái có val tốt nhất cao hơn, nếu chênh dưới 0,5 điểm thì lấy 3e-3;
+- Model 1 chỉ đổi sang cách train mới nếu val tốt nhất không thấp hơn 84,9 của bản 200 epoch.
+
+| Cấu hình | Learning rate | Số epoch đã chạy | Val tốt nhất (epoch) | Test | Thời gian khi chạy một mình |
+|---|---|---|---|---|---|
+| **Baseline** | **3e-3** | 64 | **75,7** (49) | 73,0 | khoảng 13 phút |
+| Baseline | 6e-3 | 69 | 71,1 (54) | | |
+| Model 1, early stopping | **3e-3** | 92 | **78,9** (77) | 74,8 | khoảng 19 phút |
+| Model 1, early stopping | 6e-3 | 100 | 78,8 (94) | | |
+| **Model 1, 200 epoch (giữ nguyên)** | tăng lên 2e-3 rồi giảm theo cosine | 200 | **84,9** (179) | **84,6** | khoảng 42 phút |
+
+Bản Model 1 early stopping không đưa vào repo. Muốn chạy lại thì chép `train_simple_cnn.py` sang file mới, thay đoạn code từ dòng `# 3. Train` tới trước `# 4. Đánh giá trên tập test` bằng đoạn tương ứng của `train_baseline.py`, thêm tham số `--lr` (mặc định 3e-3), đổi mặc định của `--epochs` thành 100 và đổi tên trong `save_path` (ví dụ `simple_cnn_es_...`); giữ nguyên tên thì lần chạy sẽ ghi đè trọng số và kết quả của Model 1 bản 200 epoch trong `checkpoints/`. Script, log và kết quả của các lượt trong bảng nằm trong `checkpoints/thu_nghiem_early_stopping/`, chỉ có trên máy đã chạy. Test chỉ tính một lần, cho learning rate đã chọn. Test của Model 1 có TTA, của baseline thì không. Thời gian = số epoch × thời gian một epoch đo khi chạy một mình: 12,0 giây với baseline, 12,7 giây với Model 1 (augmentation chạy song song trên CPU nên gần như không làm chậm).
+
+- **Cả hai chọn learning rate 3e-3.** Với 6e-3, val của baseline thấp hơn 4,6 điểm, của Model 1 thấp hơn 0,1 điểm (dưới ngưỡng 0,5).
+- **Model 1 giữ cách train 200 epoch.** Early stopping nhanh hơn khoảng 2 lần nhưng val thấp hơn 5,9 điểm, nên không đạt luật đã chốt. Test cũng thấp hơn 9,7 điểm (khoảng tin cậy 95% [+7,2; +12,3], bootstrap theo nhóm như ở mục Kết quả).
+- **Early stopping hợp với baseline nhưng không hợp với Model 1.**
+  - Không có augmentation, baseline học thuộc ảnh train rất nhanh: train accuracy đạt 99,7% ở epoch 22 và 100% từ epoch 31, trong khi val mới 65,7% ở epoch 22. Val tăng tiếp lên 75,7 ở epoch 49, phần lớn sau các lần giảm learning rate. Sau epoch 49, val không tăng nữa dù learning rate còn giảm thêm 2 lần, nên dừng sớm là hợp lý.
+  - Có augmentation, ảnh train mỗi epoch một khác nên Model 1 học chậm hơn nhiều: ở epoch 92 train accuracy mới 90,8%. Val lên xuống giữa các epoch, nhiều lần 5 epoch liền không vượt được mức cao nhất cũ, nên `ReduceLROnPlateau` giảm learning rate 5 lần, xuống dưới 1e-4 từ epoch 88. Learning rate quá nhỏ để model học tiếp, và early stopping dừng khi model chưa học xong.
+  - Bản 200 epoch tới epoch 100 cũng mới đạt val tốt nhất 76,8. Phần lớn số điểm còn lại đến trong 100 epoch sau, khi learning rate giảm dần theo cosine về 0 (val tốt nhất 84,9 ở epoch 179).
+- **Augmentation cần train lâu mới phát huy tác dụng.** Cùng cách train ngắn, Model 1 chỉ hơn baseline 1,9 điểm test (khoảng tin cậy [−1,7; +5,4], chưa chắc có ý nghĩa), vì tới lúc dừng Model 1 vẫn chưa học xong. Train 200 epoch thì Model 1 hơn baseline 11,6 điểm [+8,4; +14,9]. Baseline chưa được thử train 200 epoch, nên chưa tách được chính xác phần nào của 11,6 điểm là nhờ augmentation.
+- Mỗi cấu hình chỉ chạy một seed.
 
 ## Cấu hình của Model 1 và Model 2 được chọn thế nào
 
