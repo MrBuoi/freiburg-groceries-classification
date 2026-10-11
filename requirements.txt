@@ -1,5 +1,8 @@
+# -*- coding: utf-8 -*-
 # Windows/Linux có GPU NVIDIA: cài PyTorch bản CUDA trước (xem README), rồi mới cài file này
-torch>=2.6
+tensorflow>=2.16  # 3 model trong youonlycodeonce/ đọc ảnh bằng tf.data
+keras>=3.15
+torch>=2.6  # backend của Keras khi chạy với KERAS_BACKEND=torch, và pipeline trong src/
 torchvision>=0.21
 numpy>=2.0
 pandas
