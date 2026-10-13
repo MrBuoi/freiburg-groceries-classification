@@ -1,18 +1,10 @@
-"""Chia train/val/test theo nhóm ảnh giống nhau, 70/15/15 trong từng lớp, để tránh rò rỉ giữa train và test.
-
-Hai ảnh cùng lớp được xếp chung nhóm nếu trùng nhau từng pixel, hoặc so khớp được ít nhất 10 điểm đặc trưng
-(ORB + RANSAC), hoặc khớp ít nhất 6 điểm và có số thứ tự file cách nhau không quá 3 (chụp liên tiếp).
-Cả nhóm luôn nằm chung một tập. Giải thích chi tiết: notebooks/eda_chia_du_lieu.ipynb.
-Kết quả ghi vào youonlycodeonce/splits/{train,val,test}.txt và groups.csv.
-
-Chạy: python youonlycodeonce/make_splits.py   (khoảng 1,5 phút, cần scikit-image)
+"""Chia train/val/test theo nhóm ảnh giống nhau để tránh rò rỉ giữa train và test.
 """
 import hashlib
 import random
 from collections import defaultdict
 from multiprocessing import Pool
 from pathlib import Path
-
 import numpy as np
 from PIL import Image
 from skimage.feature import ORB
@@ -23,33 +15,30 @@ RATIOS = {"train": 0.70, "val": 0.15, "test": 0.15}
 
 
 def describe(name):
-    """Mã băm pixel, toạ độ (số phức x + iy) và descriptor ORB (256 bit) của tối đa 256 điểm đặc trưng."""
     with Image.open(ROOT / "data" / name) as image:
         rgb = np.asarray(image.convert("RGB"))
         gray = np.asarray(image.convert("L"), dtype=np.float64) / 255
     digest = hashlib.md5(rgb.tobytes()).hexdigest()
-    # bỏ viền xám (128, 128, 128) do tác giả bộ dữ liệu thêm vào, để viền không bị tính là điểm giống nhau
+    # bỏ viền xám từ dữ liệu gốc
     border = np.all(np.abs(rgb.astype(np.int16) - 128) <= 3, axis=2)
     rows, cols = np.where(border.mean(axis=1) < 0.98)[0], np.where(border.mean(axis=0) < 0.98)[0]
     if len(rows) and len(cols):
         gray = gray[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
     orb = ORB(n_keypoints=256, fast_threshold=0.05, n_scales=6, downscale=1.25)
-    orb.detect_and_extract(gray)  # ảnh nào trong bộ dữ liệu cũng có hơn 200 điểm
+    orb.detect_and_extract(gray)  
     points = orb.keypoints[:, 1] + 1j * orb.keypoints[:, 0]
     return digest, points, np.packbits(orb.descriptors, axis=1).view(np.uint64)
 
 
 def ransac(src, dst, rng, tries=400):
-    """Thử các phép biến đổi dst = a*src + b (dịch, xoay dưới 30 độ, phóng to/thu nhỏ 0,5-2 lần), mỗi phép
-    dựng từ một cặp điểm: thử hết các cặp nếu không quá 400 cặp, nhiều hơn thì chọn ngẫu nhiên 400 cặp.
-    Trả về số điểm khớp đúng (lệch dưới 4 pixel) của phép tốt nhất."""
     n = len(src)
     if n * (n - 1) // 2 <= tries:
         p, q = np.triu_indices(n, 1)
     else:
         p, q = rng.integers(n, size=tries), rng.integers(n, size=tries)
         p, q = p[p != q], q[p != q]
-    far = np.abs(src[p] - src[q]) > 8  # hai điểm quá gần nhau cho phép biến đổi không ổn định
+    # đặt min khoảng cách hai điểm để đảm bảo phép biến đổi ổn định
+    far = np.abs(src[p] - src[q]) > 8  
     p, q = p[far], q[far]
     if len(p) == 0:
         return 0
@@ -62,19 +51,21 @@ def ransac(src, dst, rng, tries=400):
 
 
 def match(task):
-    """So ảnh i với các ảnh sau nó trong cùng lớp; trả về các cặp (i, j, số điểm khớp) có ít nhất 6 điểm."""
     i, later = task
     pi, di = features[i][1:]
     edges = []
     for j in later:
         pj, dj = features[j][1:]
-        if len(di) < 6 or len(dj) < 6:  # cần ít nhất 6 cặp điểm, mỗi điểm chỉ ghép được một lần
+        if len(di) < 6 or len(dj) < 6:  
             continue
-        dist = np.bitwise_count(di[:, None] ^ dj[None]).sum(axis=2)  # khoảng cách Hamming giữa các điểm
-        best = dist.argmin(axis=1)  # điểm gần nhất ở ảnh j của mỗi điểm ở ảnh i
+        # khoảng cách Hamming giữa các điểm
+        dist = np.bitwise_count(di[:, None] ^ dj[None]).sum(axis=2) 
+        # điểm gần nhất ở ảnh j của mỗi điểm ở anh i  
+        best = dist.argmin(axis=1)  
         first = dist.min(axis=1)
-        second = np.partition(dist, 1, axis=1)[:, 1]  # khoảng cách gần thứ hai
-        # ghép hai điểm nếu chúng gần nhất của nhau, đủ gần, và rõ ràng gần hơn điểm thứ hai
+        # khoảng cách gần thứ hai
+        second = np.partition(dist, 1, axis=1)[:, 1]  
+        # ghép hai điểm nếu gần nhau nhất
         good = (dist.argmin(axis=0)[best] == np.arange(len(di))) & (first <= 64) & (first < 0.8 * second)
         if good.sum() >= 6:
             n = ransac(pi[good], pj[best[good]], np.random.default_rng([SEED, i, j]))
@@ -82,15 +73,13 @@ def match(task):
                 edges.append((i, j, n))
     return edges
 
-
-def share(data):  # mỗi tiến trình con giữ một bản đặc trưng của tất cả ảnh
+def share(data): 
     global features
     features = data
 
-
 if __name__ == "__main__":
     names = sorted(f"{p.parent.name}/{p.name}" for p in (ROOT / "data").glob("*/*.png")
-                   if not p.name.startswith("."))  # bỏ file ẩn ._*.png do macOS tạo
+                   if not p.name.startswith("."))  
     classes = [name.split("/")[0] for name in names]
     assert len(names) == 4947 and len(set(classes)) == 25, (
         f"data/ có {len(set(classes))} lớp, {len(names)} ảnh; cần đúng 25 lớp, 4.947 ảnh (xem README)")
@@ -98,7 +87,7 @@ if __name__ == "__main__":
         features = pool.map(describe, names, chunksize=16)
 
     edges, first_seen = [], {}
-    for i, (digest, _, _) in enumerate(features):  # ảnh trùng nhau từng pixel
+    for i, (digest, _, _) in enumerate(features):  
         if digest in first_seen:
             edges.append((first_seen[digest], i))
         first_seen.setdefault(digest, i)
@@ -106,10 +95,9 @@ if __name__ == "__main__":
     with Pool(initializer=share, initargs=(features,)) as pool:
         for found in pool.map(match, tasks, chunksize=8):
             for i, j, n in found:
-                if n >= 10 or abs(int(names[i][-8:-4]) - int(names[j][-8:-4])) <= 3:  # số thứ tự file
+                if n >= 10 or abs(int(names[i][-8:-4]) - int(names[j][-8:-4])) <= 3:  
                     edges.append((i, j))
-
-    # gom nhóm: ban đầu mỗi ảnh có nhãn nhóm riêng; gặp cặp (i, j) thì cả nhóm của j đổi sang nhãn của i
+    # gom nhóm
     label = list(range(len(names)))
     for i, j in edges:
         old, new = label[j], label[i]
@@ -119,7 +107,7 @@ if __name__ == "__main__":
         members[x].append(i)
     groups = sorted(members.values())
 
-    # trong từng lớp, xáo các nhóm rồi đưa lần lượt mỗi nhóm vào tập đang thiếu nhiều nhất so với 70/15/15
+    # trong từng lớp, xáo các nhóm rồi đưa lần lượt mỗi nhóm vào train/val/test cho đúng tỉ lệ 70/15/15
     rng, split_of = random.Random(SEED), {}
     for c in sorted(set(classes)):
         class_groups = [g for g in groups if classes[g[0]] == c]
